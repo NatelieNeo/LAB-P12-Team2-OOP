@@ -54,6 +54,8 @@ def build_input_record(form_data: dict[str, str]) -> dict:
         for item in form_data.get("ingredients", "").split(",")
         if item.strip()
     ]
+    if form_data.get("meal_source") == "out":
+        pantry = []  # no pantry needed when eating out
     gender = {"M": "male", "F": "female"}.get(form_data["gender"], form_data["gender"])
     activity_level = {
         "moderately active": "moderate",

@@ -11,3 +11,20 @@ if (planForm && loader) {
         loader.classList.add("is-visible");
     });
 }
+
+const mealSource = document.getElementById("meal_source");
+const ingredients = document.getElementById("ingredients");
+
+function toggleIngredients() {
+    if (!mealSource || !ingredients) return;
+    const eatingOut = mealSource.value === "out";
+    ingredients.disabled = eatingOut;
+    ingredients.placeholder = eatingOut
+        ? "Not needed when eating out"
+        : "e.g. chicken, rice, lettuce";
+}
+
+if (mealSource && ingredients) {
+    mealSource.addEventListener("change", toggleIngredients);
+    toggleIngredients();
+}

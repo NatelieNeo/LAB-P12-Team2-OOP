@@ -52,3 +52,9 @@ details[open] summary { border-bottom: 1px solid var(--line); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 760px) { .brand { margin-bottom: 42px; } form { grid-template-columns: repeat(2, 1fr); padding: 20px; } label, label.wide { grid-column: span 1; } label.wide, .group-title, button { grid-column: 1 / -1; } .meals { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { main { padding: 24px 15px 42px; } .brand { align-items: flex-start; flex-direction: column; gap: 6px; } form { display: block; } label { margin-bottom: 15px; } .summary { grid-template-columns: 1fr; } }
+
+input:disabled {
+    background: #e5e5e5;
+    color: #888;
+    cursor: not-allowed;
+}

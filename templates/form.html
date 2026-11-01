@@ -29,7 +29,7 @@
     {% if include_preferences %}
     <div class="group-title">Today's preferences</div>
     <label class="wide">Food preference<input name="meal_preference" value="{{ profile.get('meal_preference', '') }}" placeholder="e.g. western, rice dishes"></label>
-    <label>Meal source<select name="meal_source"><option value="in" {% if profile.get('meal_source') == "in" %}selected{% endif %}>in</option><option value="out" {% if profile.get('meal_source') == "out" %}selected{% endif %}>out</option><option value="both" {% if profile.get('meal_source', 'both') == "both" %}selected{% endif %}>both</option></select></label>
+    <label>Meal source<select name="meal_source" id="meal_source"><option value="in" {% if profile.get('meal_source') == "in" %}selected{% endif %}>in</option><option value="out" {% if profile.get('meal_source') == "out" %}selected{% endif %}>out</option><option value="both" {% if profile.get('meal_source', 'both') == "both" %}selected{% endif %}>both</option></select></label>
     <label class="wide">Ingredients available<input name="ingredients" value="{{ profile.get('ingredients', '') }}" placeholder="e.g. chicken, rice, lettuce"></label>
     <label>Daily budget<input name="budget" type="number" min="0" step="0.01" value="{{ profile.get('budget', '') }}" placeholder="e.g. 20, or 0"></label>
     {% endif %}
