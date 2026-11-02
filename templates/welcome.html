@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="brand"><span class="mark">Calora / daily table</span><span class="date">Your personal health assistant</span></header>
+<h1>Welcome to Calora.</h1>
+<p class="lede">Sign in with your username to keep your profile, meal plans, and preferences together throughout this session.</p>
+{% if message %}<p class="notice">{{ message }}</p>{% endif %}
+<form method="post" action="/login">
+    <label class="wide">Username<input name="username" placeholder="e.g. tim" required></label>
+    <button type="submit">Continue &rarr;</button>
+</form>
+{% endblock %}

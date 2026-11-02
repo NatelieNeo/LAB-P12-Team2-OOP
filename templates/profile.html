@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="brand"><span class="mark">Calora / profile</span><div class="header-actions"><span class="date">Signed in as {{ profile.get("username", session.get("username", "")) }}</span><form method="post" action="/logout" class="logout-form"><button class="icon-link" type="submit" title="Log out" aria-label="Log out">↪</button></form></div></header>
+<h1>Your profile</h1><p class="lede">Review your saved personal details and update them whenever your needs change.</p>
+{% if message %}<p class="notice">{{ message }}</p>{% endif %}
+<section class="profile">{% for key, label in [("username", "Username"), ("name", "Name"), ("age", "Age"), ("gender", "Gender"), ("weight_kg", "Weight (kg)"), ("height_cm", "Height (cm)"), ("activity_level", "Activity level"), ("goal", "Goal"), ("dietary_restrictions", "Dietary restrictions")] %}<p><strong>{{ label }}:</strong> {{ profile.get(key, "") }}</p>{% endfor %}</section>
+<div class="actions"><a class="primary-action" href="/">Create today's plan &rarr;</a><a class="text-action" href="/profile/edit">Edit profile</a><a class="text-action" href="/plans">Meal history</a></div>
+{% endblock %}
