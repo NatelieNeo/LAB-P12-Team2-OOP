@@ -31,5 +31,15 @@ class Field(ABC):
        
         return True  # By default, all fields apply to all records
 
-    
+    def _is_null(self, raw: str) -> bool:
+        return raw == ""
+
+    def _reply(self, value):
+        reply = self.replies.get(value, self.replies.get("*"))
+        if reply is not None:
+            print(reply.format(value=value))
+
+    @abstractmethod
+    def convert(self, raw: str): #return accepted value or raise InvalidInput
+        pass        
 
