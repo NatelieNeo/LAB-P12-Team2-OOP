@@ -89,3 +89,105 @@ class PlannedMeal:
                 else []
             ),
         }
+class NutritionCalculator:
+    _ACTIVITY_MULTIPLIERS = {
+        "sedentary": 1.2,
+        "light": 1.375,
+        "moderate": 1.55,
+        "active": 1.725,
+        "very_active": 1.9,
+    }
+
+    _GOAL_ADJUSTMENTS = {
+        "lose": -500,
+        "maintain": 0,
+        "gain": 300,
+    }
+
+    _MACRO_SPLITS = {
+        "lose": {
+            "protein": 0.35,
+            "carbs": 0.35,
+            "fat": 0.30,
+        },
+        "maintain": {
+            "protein": 0.30,
+            "carbs": 0.40,
+            "fat": 0.30,
+        },
+        "gain": {
+            "protein": 0.35,
+            "carbs": 0.40,
+            "fat": 0.25,
+        },
+    }
+
+    def bmr(self, profile):
+        base = (
+            10 * profile.weight_kg
+            + 6.25 * profile.height_cm
+            - 5 * profile.age
+        )
+
+        gender = str(profile.gender).strip().lower()
+
+        return base + 5 if gender in {"male", "m"} else base - 161
+
+    def tdee(self, profile):
+        activity = (
+            str(profile.activity_level)
+            .strip()
+            .lower()
+            .replace(" ", "_")
+        )
+
+        activity = {
+            "moderately_active": "moderate",
+        }.get(activity, activity)
+
+        multiplier = self._ACTIVITY_MULTIPLIERS.get(
+            activity,
+            self._ACTIVITY_MULTIPLIERS["sedentary"],
+        )
+
+        return self.bmr(profile) * multiplier
+
+    def macro_targets(self, calorie_amount, goal):
+        split = self._MACRO_SPLITS.get(
+            goal,
+            self._MACRO_SPLITS["maintain"],
+        )
+
+        return {
+            "protein_g": round(
+                calorie_amount * split["protein"] / 4, 1
+            ),
+            "carbs_g": round(
+                calorie_amount * split["carbs"] / 4, 1
+            ),
+            "fat_g": round(
+                calorie_amount * split["fat"] / 9, 1
+            ),
+        }
+
+    def targets(self, profile):
+        bmr = self.bmr(profile)
+        tdee = self.tdee(profile)
+
+        daily_target = (
+            tdee + self._GOAL_ADJUSTMENTS.get(profile.goal, 0)
+        )
+
+        macros = self.macro_targets(
+            daily_target / 3,
+            profile.goal,
+        )
+
+        return NutritionTargets(
+            bmr=bmr,
+            tdee=tdee,
+            daily_calorie_target=daily_target,
+            _protein_g=macros["protein_g"],
+            _carbs_g=macros["carbs_g"],
+            _fat_g=macros["fat_g"],
+        )
