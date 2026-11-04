@@ -14,11 +14,10 @@ class AIClient(ABC):
         pass
 
 
-# Handles talking to the Gemini API
 class GeminiClient(AIClient):
 
     def __init__(self, model=GEMINI_MODEL):
-        load_dotenv()  # Load environment variables from .env file
+        load_dotenv() 
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
@@ -26,3 +25,7 @@ class GeminiClient(AIClient):
 
         self.__model = model
         self.__client = genai.Client(api_key=api_key)
+
+    @property
+    def model(self):
+        return self.__model
