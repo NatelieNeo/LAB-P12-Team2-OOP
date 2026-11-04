@@ -54,3 +54,8 @@ class AIManager:
     @property
     def max_retries(self):
         return self.__max_retries
+
+    # Save the raw response so we can check it when debugging
+    def __save_raw_response(self, raw_text):
+        with open("ai_response.json", "w") as f:
+            f.write(raw_text)
