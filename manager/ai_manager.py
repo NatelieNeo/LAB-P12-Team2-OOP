@@ -47,6 +47,10 @@ class GeminiClient(AIClient):
 class AIManager:
 
     def __init__(self, client, max_retries=MAX_RETRIES):
-        self.__client = client  # passed in, e.g. GeminiClient()
+        self.__client = client  # passed in GeminiClient()
         self.__prompt_builder = MealPromptBuilder()
         self.__max_retries = max_retries
+
+    @property
+    def max_retries(self):
+        return self.__max_retries
