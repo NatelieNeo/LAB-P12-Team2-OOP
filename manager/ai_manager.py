@@ -11,6 +11,8 @@ from manager.meal_prompt_builder import MealPromptBuilder
 
 logger = logging.getLogger(__name__)
 
+
+# Any AI client needs a generate() method that returns the raw response text
 class AIClient(ABC):
 
     @abstractmethod
@@ -57,6 +59,23 @@ class AIManager:
     @property
     def max_retries(self):
         return self.__max_retries
+
+    # Returns the recommendations dict, or None if all attempts fail
+    def get_recommendations(self, input_record):
+        prompt = self.__prompt_builder.build(input_record)
+
+        for attempt in range(1, self.__max_retries + 1):
+            result = self.__attempt(prompt, attempt)
+
+            if result is not None:
+                logger.info("AI response successfully validated.")
+                return result
+
+        logger.error(
+            "AI request failed after %s attempts.",
+            self.__max_retries
+        )
+        return None
 
     # Save the raw response so we can check it when debugging
     def __save_raw_response(self, raw_text):
