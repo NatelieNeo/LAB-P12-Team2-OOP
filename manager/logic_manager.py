@@ -191,3 +191,91 @@ class NutritionCalculator:
             _carbs_g=macros["carbs_g"],
             _fat_g=macros["fat_g"],
         )
+
+class MealTagger:
+    _CALORIE_FIT_TOLERANCE = 0.20
+
+    def tag_calorie_range(self, calories):
+        if calories < 400:
+            return "Low (<400 kcal)"
+        if calories <= 700:
+            return "Moderate (400-700 kcal)"
+        return "High (>700 kcal)"
+
+    def tag_calorie_fit(self, calories, target):
+        lower = target * (1 - self._CALORIE_FIT_TOLERANCE)
+        upper = target * (1 + self._CALORIE_FIT_TOLERANCE)
+
+        if calories < lower:
+            return "under_target"
+        if calories > upper:
+            return "over_target"
+        return "on_target"
+
+    def tag_protein(self, protein_g):
+        if protein_g < 10:
+            return "Low (<10g)"
+        if protein_g <= 20:
+            return "Moderate (10-20g)"
+        if protein_g <= 30:
+            return "High (>20-30g)"
+        return "Very High (>30g)"
+
+    def tag_carbs(self, carbs_g):
+        if carbs_g < 15:
+            return "Low (<15g)"
+        if carbs_g <= 30:
+            return "Moderate (15-30g)"
+        if carbs_g <= 60:
+            return "High (>30-60g)"
+        return "Very High (>60g)"
+
+    def tag_fat(self, fat_g):
+        if fat_g < 5:
+            return "Low (<5g)"
+        if fat_g <= 10:
+            return "Moderate (5-10g)"
+        if fat_g <= 20:
+            return "High (>10-20g)"
+        return "Very High (>20g)"
+
+    def tag_cost(self, cost):
+        if cost is None:
+            return "Unknown"
+        if cost < 5:
+            return "Budget (<$5)"
+        if cost < 10:
+            return "Moderate (<$10)"
+        if cost < 15:
+            return "Moderate (<$15)"
+        if cost < 20:
+            return "High (<$20)"
+        return "Premium (>$20)"
+
+    def annotate(self, candidate, targets):
+        return PlannedMeal(
+            name=candidate.meal_name,
+            source_type=candidate.meal_source_type,
+            tags={
+                "calorie_range": self.tag_calorie_range(
+                    candidate.calories
+                ),
+                "calorie_tag": self.tag_calorie_fit(
+                    candidate.calories,
+                    targets.per_meal_calories(),
+                ),
+                "protein_tag": self.tag_protein(
+                    candidate.protein_g
+                ),
+                "carbs_tag": self.tag_carbs(
+                    candidate.carbs_g
+                ),
+                "fat_tag": self.tag_fat(
+                    candidate.fat_g
+                ),
+                "cost_tier": self.tag_cost(
+                    candidate.estimated_cost
+                ),
+            },
+            ingredients=candidate.ingredients,
+        )
