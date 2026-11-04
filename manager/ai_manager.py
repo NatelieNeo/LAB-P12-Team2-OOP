@@ -29,3 +29,13 @@ class GeminiClient(AIClient):
     @property
     def model(self):
         return self.__model
+    
+    def generate(self, prompt):
+        response = self.__client.models.generate_content(
+            model=self.__model,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json"
+            }
+        )
+        return response.text
