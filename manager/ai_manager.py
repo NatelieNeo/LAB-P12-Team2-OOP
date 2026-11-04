@@ -1,12 +1,15 @@
 import os
+import logging
 from abc import ABC, abstractmethod
 
 from dotenv import load_dotenv
 from google import genai
 
 from config import GEMINI_MODEL, MAX_RETRIES
+from manager.ai_handler_manager import parse_response
 from manager.meal_prompt_builder import MealPromptBuilder
 
+logger = logging.getLogger(__name__)
 
 class AIClient(ABC):
 
@@ -59,3 +62,33 @@ class AIManager:
     def __save_raw_response(self, raw_text):
         with open("ai_response.json", "w") as f:
             f.write(raw_text)
+
+    # One call to the AI, returns the validated dict or None
+    def __attempt(self, prompt, attempt):
+        try:
+            logger.info(
+                "Calling AI API - attempt %s/%s",
+                attempt,
+                self.__max_retries
+            )
+
+            raw_text = self.__client.generate(prompt)
+            self.__save_raw_response(raw_text)
+
+            # convert the response to JSON and validate it
+            result = parse_response(raw_text)
+
+            if result is None:
+                logger.warning(
+                    "Invalid AI response on attempt %s.",
+                    attempt
+                )
+            return result
+
+        except Exception as error:
+            logger.error(
+                "AI API error on attempt %s: %s",
+                attempt,
+                error
+            )
+            return None
