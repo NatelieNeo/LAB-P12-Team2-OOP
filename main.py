@@ -1,9 +1,16 @@
 # Connects the IO layer to the AI layer
 import json
+import logging
+
 from manager.data_manager import *
 from manager.io_manager import *
-from manager.ai_manager import call_ai
+from manager.ai_manager import GeminiClient, AIManager
 from manager.logic_manager import build_meal_plan, format_meal_plan
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 def main():
@@ -99,8 +106,14 @@ def main():
 
 def meal_plan_option(input_record, name):
     # ----- AI LAYER -----
-    ai_output = call_ai(input_record) # Send input_record to Gemini through ai_manager
-
+    # Send input_record to Gemini through AIManager
+    try:
+        ai_manager = AIManager(GeminiClient())
+        ai_output = ai_manager.get_recommendations(input_record)
+    except ValueError as error:  # missing API key
+        print(error)
+        ai_output = None
+        
     # Stop the program if the AI request failed
     if ai_output is None:
         print("Unable to generate meal recommendations.")
