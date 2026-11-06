@@ -46,4 +46,8 @@ class AIHandlerManager:
                 and len(recommendations) == self._expected_count
                 and all(self._validate_recommendation(r) for r in recommendations))
 
-    
+    def validate_response(self, data: Any) -> bool:
+        return (isinstance(data, dict)
+                and set(data.keys()) == self.TOP_LEVEL_FIELDS
+                and self._validate_targets(data["estimated_nutrition_targets"])
+                and self._validate_recommendations(data["recommendations"]))
