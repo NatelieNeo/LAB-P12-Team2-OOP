@@ -1,248 +1,239 @@
-"""Flask web application for Calora's meal planner."""
-
+"""Web entry point: gunicorn app:app  (or python app.py for development)."""
+import logging
 import os
+from typing import Any, Dict, Optional
 
-from flask import Flask, redirect, render_template, request, session, url_for
+from dotenv import load_dotenv
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
-from manager.ai_manager import call_ai
-from manager.data_manager import (
-    get_meal_plans_by_user,
-    load_user_profiles,
-    save_meal_plan,
-    save_user_profile,
-    update_user_profile,
+from manager.controller import AppFactory, CaloraController
+from manager.exceptions import (
+    AIConnectionError, AIResponseError, CaloraError, InvalidInputError,
+    NoSuitableMealsError, StorageError,
 )
-from manager.logic_manager import build_meal_plan
-
-HOST = "127.0.0.1"
-PORT = 8080
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "calora-development-key")
+from manager.io_manager import IOManager
+from manager.job_manager import JobStatus
+from manager.models import MealPlan, UserProfile
 
 
-def render_form(
-    profile: dict | None = None,
-    message: str = "",
-    action: str = "/plan",
-    submit_label: str = "Build today's meal plan →",
-    include_profile: bool = True,
-    include_preferences: bool = True,
-) -> str:
-    """Render the shared profile and preferences form."""
-    return render_template(
-        "form.html",
-        profile=profile or {},
-        message=message,
-        action=action,
-        submit_label=submit_label,
-        include_profile=include_profile,
-        include_preferences=include_preferences,
-    )
+class WebApp:
+    """Flask user interface. Like CliApp it holds no business logic: forms are
+    validated by the IOManager and the work is done by the controller."""
 
+    HOST = "127.0.0.1"
+    PORT = 8080
+    ACTIVITY_FORM_LABELS = {"moderate": "moderately active", "very_active": "very active"}
+    SOURCE_FORM_LABELS = {"home_cooked": "in", "eat_out": "out", "both": "both"}
 
-def build_input_record(form_data: dict[str, str]) -> dict:
-    """Convert browser form values into the shape used by the project layers."""
-    restrictions = [
-        item.strip()
-        for item in form_data.get("dietary_restrictions", "").split(",")
-        if item.strip()
-    ]
-    if restrictions == ["nil"]:
-        restrictions = []
-    pantry = [
-        item.strip()
-        for item in form_data.get("ingredients", "").split(",")
-        if item.strip()
-    ]
-    if form_data.get("meal_source") == "out":
-        pantry = []  # no pantry needed when eating out
-    gender = {"M": "male", "F": "female"}.get(form_data["gender"], form_data["gender"])
-    activity_level = {
-        "moderately active": "moderate",
-        "very active": "very_active",
-    }.get(form_data["activity_level"], form_data["activity_level"])
-    meal_source = {"in": "home_cooked", "out": "eat_out"}.get(
-        form_data.get("meal_source", "both"), form_data.get("meal_source", "both")
-    )
-    return {
-        "username": form_data["username"].strip(),
-        "name": form_data["name"].strip(),
-        "age": int(form_data["age"]),
-        "gender": gender,
-        "weight_kg": float(form_data["weight_kg"]),
-        "height_cm": float(form_data["height_cm"]),
-        "activity_level": activity_level,
-        "goal": form_data["goal"],
-        "dietary_restrictions": restrictions,
-        "meal_preference": form_data.get("meal_preference", "").strip(),
-        "meal_source": meal_source,
-        "pantry_ingredients": pantry,
-        "daily_budget": float(form_data["budget"]) if form_data.get("budget") else None,
-    }
+    def __init__(self, controller: CaloraController, io: Optional[IOManager] = None):
+        self._controller = controller
+        self._io = io or IOManager()
+        self._app = Flask(__name__)
+        self._app.secret_key = os.environ.get("FLASK_SECRET_KEY", "calora-development-key")
+        self._register_routes()
 
+    @property
+    def flask_app(self) -> Flask:
+        return self._app
 
-def generate_plan(input_record: dict) -> dict | None:
-    ai_output = call_ai(input_record)
-    if ai_output is None:
-        return None
-    return build_meal_plan(ai_output.get("recommendations", []), input_record)
+    @staticmethod
+    def create(controller: Optional[CaloraController] = None) -> Flask:
+        load_dotenv()
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+        return WebApp(controller or AppFactory.build_controller()).flask_app
 
-
-def profile_for_username(username: str) -> dict | None:
-    matches = load_user_profiles("username", username.strip())
-    if not matches:
-        return None
-    return next(iter(matches.values()))
-
-
-def profile_form_values(profile: dict) -> dict:
-    values = dict(profile)
-    restrictions = profile.get("dietary_restrictions", "")
-    if isinstance(restrictions, list):
-        restrictions = ", ".join(restrictions)
-    values["dietary_restrictions"] = restrictions
-    values["budget"] = profile.get("daily_budget", "")
-    values["meal_preference"] = profile.get("meal_preference", "")
-    values["ingredients"] = ", ".join(profile.get("pantry_ingredients", []))
-    values["gender"] = {"male": "M", "female": "F"}.get(profile.get("gender"), profile.get("gender", ""))
-    values["activity_level"] = {
-        "moderate": "moderately active",
-        "very_active": "very active",
-    }.get(profile.get("activity_level"), profile.get("activity_level", ""))
-    values["meal_source"] = {"home_cooked": "in", "eat_out": "out"}.get(
-        profile.get("meal_source"), profile.get("meal_source", "both")
-    )
-    return values
-
-
-def save_or_update_profile(input_record: dict) -> None:
-    username = input_record["username"]
-    if profile_for_username(username) is None:
-        save_user_profile(input_record)
-    else:
-        update_user_profile(username, input_record)
-
-
-@app.get("/")
-def index() -> str:
-    username = session.get("username")
-    if not username:
-        return render_template("welcome.html")
-    profile = profile_for_username(username)
-    if profile is None:
-        session.clear()
-        return render_template("welcome.html", message="Your profile could not be found. Please sign in again.")
-    return render_form(profile_form_values(profile), include_profile=False)
-
-
-@app.post("/login")
-def login() -> str:
-    username = request.form.get("username", "").strip()
-    if not username:
-        return render_template("welcome.html", message="Please enter a username."), 400
-    loaded = profile_for_username(username)
-    session["username"] = username
-    if loaded is None:
-        return render_form(
-            {"username": username},
-            "No profile exists yet. Complete your details to create one.",
-            action="/profile/create",
-            submit_label="Create profile",
-            include_preferences=False,
+    # ---- routes ------------------------------------------------------------------
+    def _register_routes(self) -> None:
+        rules = (
+            ("/", "index", self.index, ["GET"]),
+            ("/login", "login", self.login, ["POST"]),
+            ("/plan", "plan", self.plan, ["POST"]),
+            ("/plan/status/<job_id>", "plan_status", self.plan_status, ["GET"]),
+            ("/plan/result/<job_id>", "plan_result", self.plan_result, ["GET"]),
+            ("/profile/create", "create_profile", self.create_profile, ["POST"]),
+            ("/profile", "profile", self.profile, ["GET"]),
+            ("/profile/edit", "edit_profile", self.edit_profile, ["GET"]),
+            ("/profile/update", "update_profile", self.update_profile, ["POST"]),
+            ("/plans", "plans", self.plans, ["GET"]),
+            ("/logout", "logout", self.logout, ["POST"]),
         )
-    return redirect(url_for("profile"))
+        for path, endpoint, view, methods in rules:
+            self._app.add_url_rule(path, endpoint, view, methods=methods)
 
+    # ---- view helpers -----------------------------------------------------------
+    def _current_profile(self) -> Optional[UserProfile]:
+        username = session.get("username")
+        return self._controller.get_profile(username) if username else None
 
-@app.post("/plan")
-def plan() -> str:
-    username = session.get("username")
-    if not username:
-        return redirect(url_for("index"))
-    profile = profile_for_username(username)
-    if profile is None:
+    def _form_values(self, profile: UserProfile) -> Dict[str, Any]:
+        """Profile -> the strings the HTML form fields expect."""
+        data = profile.to_dict()
+        prefs = profile.preferences
+        data["gender"] = {"male": "M", "female": "F"}.get(data["gender"], data["gender"])
+        data["activity_level"] = self.ACTIVITY_FORM_LABELS.get(data["activity_level"], data["activity_level"])
+        data["dietary_restrictions"] = ", ".join(profile.dietary_restrictions)
+        data["budget"] = prefs.get("daily_budget") or ""
+        data["ingredients"] = ", ".join(prefs.get("pantry_ingredients", []))
+        data["meal_source"] = self.SOURCE_FORM_LABELS.get(prefs.get("meal_source", "both"), "both")
+        return data
+
+    def _plan_view(self, plan: MealPlan, shopping_list=None) -> Dict[str, Any]:
+        view = plan.to_dict()
+        view["disclaimer"] = self._io.allergen_notice(plan)
+        view["shopping_items"] = shopping_list.items if shopping_list else []
+        view["shopping_covered"] = shopping_list.covered_by_pantry if shopping_list else []
+        return view
+
+    def _render_form(self, profile=None, message="", action="/plan", submit_label="Build today's meal plan →",
+                     include_profile=True, include_preferences=True, status=200):
+        page = render_template(
+            "form.html", profile=profile or {}, message=message, action=action,
+            submit_label=submit_label, include_profile=include_profile,
+            include_preferences=include_preferences)
+        return page, status
+
+    @staticmethod
+    def _error_message(error: CaloraError) -> str:
+        if isinstance(error, AIConnectionError):
+            return "Calora could not reach the AI service. Please try again in a moment."
+        if isinstance(error, AIResponseError):
+            return "The AI gave an unusable answer. Please try again."
+        if isinstance(error, (NoSuitableMealsError, InvalidInputError)):
+            return str(error)
+        if isinstance(error, StorageError):
+            return "Your data could not be saved. Please try again."
+        return "Unable to generate a meal plan right now."
+
+    # ---- pages ----------------------------------------------------------------
+    def index(self):
+        if not session.get("username"):
+            return render_template("welcome.html")
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return render_template("welcome.html", message="Your profile could not be found. Please sign in again.")
+        return self._render_form(self._form_values(profile), include_profile=False)
+
+    def login(self):
+        try:
+            username = self._io.read_username(request.form.get("username"))
+        except InvalidInputError as error:
+            return render_template("welcome.html", message=str(error)), 400
+        session["username"] = username
+        if self._controller.get_profile(username) is None:
+            return self._render_form(
+                {"username": username}, "No profile exists yet. Complete your details to create one.",
+                action="/profile/create", submit_label="Create profile", include_preferences=False)
+        return redirect(url_for("profile"))
+
+    def plan(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        try:
+            plan_request = self._io.read_request_form(request.form, profile)
+        except InvalidInputError as error:
+            return self._render_form(self._form_values(profile), str(error), include_profile=False, status=400)
+        job_id = self._controller.submit_plan_job(plan_request)
+        return render_template(
+            "plan_wait.html",
+            status_url=url_for("plan_status", job_id=job_id),
+            result_url=url_for("plan_result", job_id=job_id))
+
+    def _owned_job(self, job_id: str):
+        job = self._controller.get_plan_job(job_id)
+        if job is None or job.owner != session.get("username"):
+            return None
+        return job
+
+    def plan_status(self, job_id: str):
+        job = self._owned_job(job_id)
+        if job is None:
+            return jsonify({"status": "NOT_FOUND"}), 404
+        payload = {"status": job.status.value}
+        if job.status is JobStatus.FAILED:
+            payload["message"] = self._error_message(job.error)
+        return jsonify(payload)
+
+    def plan_result(self, job_id: str):
+        job = self._owned_job(job_id)
+        if job is None:
+            return redirect(url_for("index"))
+        if job.status is JobStatus.FAILED:
+            return render_template("error.html", message=self._error_message(job.error)), 503
+        if job.status is not JobStatus.DONE:
+            return render_template(
+                "plan_wait.html", status_url=url_for("plan_status", job_id=job_id),
+                result_url=url_for("plan_result", job_id=job_id))
+        shopping_list = self._controller.get_shopping_list(job.result, job.context)
+        return render_template("plan.html", result=self._plan_view(job.result, shopping_list), show_actions=True)
+
+    def create_profile(self):
+        try:
+            profile = self._io.read_profile_form(request.form)
+        except InvalidInputError as error:
+            return self._render_form(
+                request.form.to_dict(), str(error), action="/profile/create", submit_label="Create profile",
+                include_preferences=False, status=400)
+        if self._controller.get_profile(profile.username) is not None:
+            return render_template("welcome.html", message="That username already exists. Please sign in.")
+        self._controller.register_profile(profile)
+        session["username"] = profile.username
+        return redirect(url_for("profile"))
+
+    def profile(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        return render_template("profile.html", profile=self._profile_page_values(profile))
+
+    @staticmethod
+    def _profile_page_values(profile: UserProfile) -> Dict[str, Any]:
+        data = profile.to_dict(include_preferences=False)
+        data["dietary_restrictions"] = ", ".join(profile.dietary_restrictions) or "none"
+        return data
+
+    def edit_profile(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        return self._render_form(
+            self._form_values(profile), action="/profile/update",
+            submit_label="Save profile changes", include_preferences=False)
+
+    def update_profile(self):
+        current = self._current_profile()
+        if current is None:
+            session.clear()
+            return redirect(url_for("index"))
+        try:
+            updated = self._io.read_profile_form(request.form, current.username)
+        except InvalidInputError as error:
+            return self._render_form(
+                self._form_values(current), str(error), action="/profile/update",
+                submit_label="Save profile changes", include_preferences=False, status=400)
+        self._controller.update_profile(current.username, updated)
+        return render_template("profile.html", profile=self._profile_page_values(updated),
+                               message="Profile updated successfully.")
+
+    def plans(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        history = [self._plan_view(plan) for plan in self._controller.get_history(profile.username).values()]
+        return render_template("history.html", username=profile.username, meal_plans=history)
+
+    def logout(self):
         session.clear()
         return redirect(url_for("index"))
-    form_data = profile_form_values(profile)
-    form_data.update(request.form.to_dict())
-    form_data["username"] = username
-    input_record = build_input_record(form_data)
-    save_or_update_profile(input_record)
-    result = generate_plan(input_record)
-    if result is None:
-        return render_template("error.html", message="Unable to generate a meal plan right now."), 503
-    save_meal_plan(result, input_record["username"])
-    return render_template("plan.html", result=result, show_actions=True)
 
 
-@app.post("/profile/create")
-def create_profile() -> str:
-    input_record = build_input_record(request.form.to_dict())
-    if profile_for_username(input_record["username"]) is not None:
-        return render_template("welcome.html", message="That username already exists. Please sign in.")
-    save_user_profile(input_record)
-    session["username"] = input_record["username"]
-    return redirect(url_for("profile"))
-
-
-@app.get("/profile")
-def profile() -> str:
-    username = session.get("username")
-    if not username:
-        return redirect(url_for("index"))
-    loaded = profile_for_username(username)
-    if loaded is None:
-        session.clear()
-        return redirect(url_for("index"))
-    return render_template("profile.html", profile=profile_form_values(loaded))
-
-
-@app.get("/profile/edit")
-def edit_profile() -> str:
-    username = session.get("username")
-    loaded = profile_for_username(username) if username else None
-    if loaded is None:
-        session.clear()
-        return redirect(url_for("index"))
-    return render_form(
-        profile_form_values(loaded),
-        action="/profile/update",
-        submit_label="Save profile changes",
-        include_preferences=False,
-    )
-
-
-@app.post("/profile/update")
-def update_profile() -> str:
-    username = session.get("username")
-    if not username:
-        return redirect(url_for("index"))
-    form_data = profile_form_values(profile_for_username(username) or {})
-    form_data.update(request.form.to_dict())
-    form_data["username"] = username
-    input_record = build_input_record(form_data)
-    if profile_for_username(input_record["username"]) is None:
-        session.clear()
-        return redirect(url_for("index"))
-    update_user_profile(input_record["username"], input_record)
-    return render_template("profile.html", profile=profile_form_values(input_record), message="Profile updated successfully.")
-
-
-@app.get("/plans")
-def plans() -> str:
-    username = session.get("username")
-    if not username or profile_for_username(username) is None:
-        session.clear()
-        return redirect(url_for("index"))
-    meal_plans = list(get_meal_plans_by_user(username).values())
-    return render_template("history.html", username=username, meal_plans=meal_plans)
-
-
-@app.post("/logout")
-def logout() -> str:
-    session.clear()
-    return redirect(url_for("index"))
-
+app = WebApp.create()
 
 if __name__ == "__main__":
-    print(f"Calora is running at http://{HOST}:{PORT}")
-    app.run(host=HOST, port=PORT, debug=True)
+    print(f"Calora is running at http://{WebApp.HOST}:{WebApp.PORT}")
+    app.run(host=WebApp.HOST, port=WebApp.PORT, debug=True)

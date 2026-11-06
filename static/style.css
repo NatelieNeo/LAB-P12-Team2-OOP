@@ -58,3 +58,7 @@ input:disabled {
     color: #888;
     cursor: not-allowed;
 }
+
+.shopping {
+    margin: 0.5rem 0 1rem 1.2rem;
+}

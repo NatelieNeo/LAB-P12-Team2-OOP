@@ -1,0 +1,88 @@
+classDiagram
+direction TB
+class CliApp {
+  -_controller : CaloraController
+  -_io : IOManager
+  +run() None
+  +main()$ None
+}
+class WebApp {
+  -_controller : CaloraController
+  -_io : IOManager
+  +create(controller)$ Flask
+  +index() / login() / plan()
+  +plan_status(job_id) / plan_result(job_id)
+  +profile() / plans() / logout()
+}
+class CaloraController {
+  #_ai : AIManager
+  #_logic : LogicManager
+  #_data : DataManager
+  #_jobs : PlanJobManager
+  +get_profile(username) UserProfile
+  +register_profile(profile) None
+  +update_profile(username, profile) bool
+  +create_meal_plan(request) MealPlan
+  +get_shopping_list(plan, request) ShoppingList
+  +get_history(username) dict
+  +submit_plan_job(request) str
+  +get_plan_job(job_id) PlanJob
+}
+class AppFactory {
+  +build_controller(provider, data, jobs)$ CaloraController
+  +build_data_manager(backend)$ DataManager
+}
+class IOManager {
+  -_validator : UserInputValidator
+  +prompt_profile(username) UserProfile
+  +prompt_request(profile) MealPlanRequest
+  +read_profile_form(form) UserProfile
+  +read_request_form(form, profile) MealPlanRequest
+  +format_plan(plan) str
+  +show_plan(plan) None
+}
+class UserInputValidator {
+  +validate_age(raw) int
+  +validate_weight(raw) float
+  +validate_budget(raw) float
+  +parse_list(raw) list
+}
+class AIManager {
+  #_provider : AIProvider
+  -_prompt_builder : PromptBuilder
+  #_handler : AIHandlerManager
+  +get_recommendations(request, targets) list
+}
+class AIHandlerManager {
+  +parse_response(text) list
+  +validate_response(data) bool
+}
+class LogicManager {
+  #_rules : list~MealRule~
+  #_criteria : list~RankingCriterion~
+  +calculate_targets(profile) NutritionTargets
+  +build_meal_plan(candidates, request) MealPlan
+  +build_shopping_list(plan, pantry) ShoppingList
+}
+class DataManager {
+  <<abstract>>
+  +save_profile(profile) None #123;abstract#125;
+  +save_plan(plan, user_id) None #123;abstract#125;
+  +profile_exists(username) bool
+}
+class PlanJobManager {
+  -_executor : ThreadPoolExecutor
+  +submit(task, owner, context) str
+  +get(job_id) PlanJob
+}
+CliApp --> CaloraController : uses
+WebApp --> CaloraController : uses
+CliApp o-- IOManager
+WebApp o-- IOManager
+IOManager *-- UserInputValidator
+CaloraController o-- AIManager
+CaloraController o-- LogicManager
+CaloraController o-- DataManager
+CaloraController o-- PlanJobManager
+AIManager --> AIHandlerManager : delegates parsing
+AppFactory ..> CaloraController : creates

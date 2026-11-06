@@ -1,7 +1,8 @@
-   .venv/
-   .git/
-   .env
-   __pycache__/
-   *.pyc
-   .pytest_cache/
-   ProjectInitialDetails.md
+**/__pycache__
+**/*.pyc
+.env
+.venv/
+.git/
+.pytest_cache/
+data/*.json
+data/*.db

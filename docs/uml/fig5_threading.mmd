@@ -1,0 +1,64 @@
+classDiagram
+direction TB
+class CaloraController {
+  #_jobs : PlanJobManager
+  +submit_plan_job(request) str
+  +get_plan_job(job_id) PlanJob
+  +create_meal_plan(request) MealPlan
+}
+class PlanJobManager {
+  -_executor : ThreadPoolExecutor
+  -_jobs : OrderedDict
+  -_lock : Lock
+  +submit(task, owner, context) str
+  +get(job_id) PlanJob
+  +shutdown() None
+}
+class PlanJob {
+  -_job_id : str
+  -_owner : str
+  -_context : MealPlanRequest
+  -_status : JobStatus
+  -_result : MealPlan
+  -_error : CaloraError
+  -_lock : Lock
+  +mark_running() None
+  +complete(result) None
+  +fail(error) None
+}
+class JobStatus {
+  <<enumeration>>
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+class ProgressSpinner {
+  -_stop_event : Event
+  +run() None
+  +stop() None
+}
+class Thread {
+  <<threading.Thread>>
+  +start() None
+  +run() None
+}
+class CliApp {
+  +run() None
+}
+class WebApp {
+  +plan() Response
+  +plan_status(job_id) JSON
+  +plan_result(job_id) Page
+}
+class JsonDataManager {
+  -_lock : Lock
+  +save_plan(plan, user_id) None
+}
+CaloraController o-- PlanJobManager
+PlanJobManager *-- "0..*" PlanJob
+PlanJob --> JobStatus
+Thread <|-- ProgressSpinner
+CliApp ..> ProgressSpinner : starts / stops
+WebApp --> CaloraController : submit and poll
+PlanJobManager ..> JsonDataManager : worker threads write via

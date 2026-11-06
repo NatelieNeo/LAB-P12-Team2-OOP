@@ -1,0 +1,111 @@
+classDiagram
+direction TB
+class LogicManager {
+  #_rules : list~MealRule~
+  #_criteria : list~RankingCriterion~
+  -_calculator : NutritionCalculator
+  -_tagger : MealTagger
+  -_shopping : ShoppingListBuilder
+  +calculate_targets(profile) NutritionTargets
+  +group_by_slot(candidates) dict
+  +rank_slot(candidates, targets, request) list
+  +build_meal_plan(candidates, request) MealPlan
+  +build_shopping_list(plan, pantry) ShoppingList
+}
+class NutritionCalculator {
+  +bmr(profile) float
+  +tdee(profile) float
+  +macro_targets(calories, goal) dict
+  +targets(profile) NutritionTargets
+}
+class MealTagger {
+  +tag_calorie_fit(calories, target) str
+  +tag_cost(cost) str
+  +annotate(candidate, targets) PlannedMeal
+}
+class ShoppingListBuilder {
+  +build(plan, pantry) ShoppingList
+}
+class MealRule {
+  <<interface>>
+  +apply(candidates, request) list #123;abstract#125;
+}
+class DietarySafetyRule {
+  -_keywords : dict
+  -_risky_dishes : dict
+  +apply(candidates, request) list
+}
+class SourcePreferenceRule {
+  +apply(candidates, request) list
+}
+class RankingCriterion {
+  <<interface>>
+  +score(candidate, targets, request) float #123;abstract#125;
+}
+class CalorieFitCriterion
+class MacroFitCriterion
+class PreferenceCriterion
+class CostCriterion
+class UserProfile {
+  -__username : str
+  -__age : int
+  -__weight_kg : float
+  -__goal : str
+  -__dietary_restrictions : list
+  +normalize_restrictions(raw)$ list
+  +to_dict() dict
+  +from_dict(data)$ UserProfile
+}
+class MealPlanRequest {
+  -_meal_source : str
+  -_pantry_ingredients : list
+  -_daily_budget : float
+}
+class NutritionTargets {
+  -_daily_calories : float
+  -_per_meal_calories : float
+  -_per_meal_macros : dict
+}
+class MealCandidate {
+  -_meal_name : str
+  -_calories : float
+  -_estimated_cost : float
+  -_ingredients : list
+}
+class MealPlan {
+  -_meals : dict
+  -_missing_slots : list
+  +add_meal(meal) None
+  +total_cost() float
+  +within_budget() bool
+  +to_dict() dict
+}
+class PlannedMeal {
+  -_name : str
+  -_calorie_tag : str
+  -_cost_tier : str
+  -_ingredients : list
+}
+class ShoppingList {
+  -_to_buy : list
+  -_in_pantry : list
+  +to_text() str
+}
+LogicManager *-- NutritionCalculator
+LogicManager *-- MealTagger
+LogicManager *-- ShoppingListBuilder
+LogicManager o-- "1..*" MealRule
+LogicManager o-- "1..*" RankingCriterion
+MealRule <|.. DietarySafetyRule
+MealRule <|.. SourcePreferenceRule
+RankingCriterion <|.. CalorieFitCriterion
+RankingCriterion <|.. MacroFitCriterion
+RankingCriterion <|.. PreferenceCriterion
+RankingCriterion <|.. CostCriterion
+MealPlan *-- "1..3" PlannedMeal
+MealPlanRequest --> UserProfile : refers to
+LogicManager ..> MealPlan : builds
+MealTagger ..> PlannedMeal : creates
+ShoppingListBuilder ..> ShoppingList : creates
+NutritionCalculator ..> NutritionTargets : creates
+LogicManager ..> MealCandidate : ranks

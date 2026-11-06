@@ -1,15 +1,9 @@
-# Python cache files
 __pycache__/
-*.py[cod]
 .pytest_cache/
-
-# Virtual environments
+*.pyc
 .venv/
-venv/
-
-# Local environment variables
 .env
-
-# IDE settings
-.vscode/
-.idea/
+_env
+data/*.json
+data/*.db
+data/*.corrupt
