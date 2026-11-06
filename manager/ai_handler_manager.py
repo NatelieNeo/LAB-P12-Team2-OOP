@@ -41,15 +41,9 @@ class AIHandlerManager:
             and all(self._is_number(recommendation[f]) for f in self.NUMERIC_FIELDS)
             and all(isinstance(recommendation[f], list) for f in self.LIST_FIELDS)
         )
-    def _validate_recommendation(self, recommendation: Any) -> bool:
-        if not isinstance(recommendation, dict):
-            return False
-        if set(recommendation.keys()) != self.RECOMMENDATION_FIELDS:
-            return False
-        if recommendation["meal_source_type"] not in self.MEAL_SOURCE_TYPES:
-            return False
-        return (
-            all(isinstance(recommendation[f], str) for f in self.STRING_FIELDS)
-            and all(self._is_number(recommendation[f]) for f in self.NUMERIC_FIELDS)
-            and all(isinstance(recommendation[f], list) for f in self.LIST_FIELDS)
-        )
+    def _validate_recommendations(self, recommendations: Any) -> bool:
+        return (isinstance(recommendations, list)
+                and len(recommendations) == self._expected_count
+                and all(self._validate_recommendation(r) for r in recommendations))
+
+    
