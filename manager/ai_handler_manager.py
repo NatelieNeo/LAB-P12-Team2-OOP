@@ -51,3 +51,18 @@ class AIHandlerManager:
                 and set(data.keys()) == self.TOP_LEVEL_FIELDS
                 and self._validate_targets(data["estimated_nutrition_targets"])
                 and self._validate_recommendations(data["recommendations"]))
+    def parse_response(self, response_text: str) -> List[MealCandidate]:
+        """Text -> validated MealCandidate objects.
+
+        Raises AIResponseError for an empty, non-JSON or schema-invalid response."""
+        if not response_text:
+            raise AIResponseError("The AI returned an empty response.")
+        try:
+            data = json.loads(response_text)
+        except json.JSONDecodeError as error:
+            logger.warning("AI response contains invalid JSON: %s", error)
+            raise AIResponseError(f"The AI response was not valid JSON: {error}") from error
+        if not self.validate_response(data):
+            logger.warning("AI response failed schema validation.")
+            raise AIResponseError("The AI response did not match the expected format.")
+        return [MealCandidate.from_dict(item) for item in data["recommendations"]]
