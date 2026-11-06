@@ -17,3 +17,15 @@ class AIHandlerManager:
     MEAL_SOURCE_TYPES = ("eat_out", "home_cooked")
     TOP_LEVEL_FIELDS = {"estimated_nutrition_targets", "recommendations"}
     RECOMMENDATION_FIELDS = set(STRING_FIELDS + NUMERIC_FIELDS + LIST_FIELDS + ["meal_source_type"])
+
+    def __init__(self, expected_count: int = RECOMMENDATION_COUNT):
+        self._expected_count = expected_count
+
+    @staticmethod
+    def _is_number(value: Any) -> bool:
+        return isinstance(value, (int, float))
+
+    def _validate_targets(self, targets: Any) -> bool:
+        return (isinstance(targets, dict)
+                and set(targets.keys()) == self.TARGET_FIELDS
+                and all(self._is_number(value) for value in targets.values()))
