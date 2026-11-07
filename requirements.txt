@@ -1,6 +1,0 @@
-python-dotenv
-google-genai
-Flask
-uvicorn
-gunicorn
-pytest==9.1.1

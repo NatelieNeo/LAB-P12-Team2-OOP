@@ -1,132 +1,98 @@
-# Connects the IO layer to the AI layer
-import json
-from manager.data_manager import *
-from manager.io_manager import *
-from manager.ai_manager import call_ai
-from manager.logic_manager import build_meal_plan, format_meal_plan
+"""Command-line entry point: python main.py"""
+import logging
+from typing import Optional
+
+from dotenv import load_dotenv
+
+from manager.controller import AppFactory, CaloraController
+from manager.exceptions import CaloraError
+from manager.io_manager import IOManager
+from manager.job_manager import ProgressSpinner
+from manager.models import UserProfile
 
 
-def main():
-    # ----- IO LAYER -----
-    input_record = {}
-    welcome()
+class CliApp:
+    """Terminal user interface. It owns no business logic: it asks the
+    IOManager for input and output and the controller for the work."""
 
-    # Check if the user exists
-    username = get_username()
-    if verify_user_profile("username", username):  #check if user profile exists
-        # load user profile from JSON file
-        users = load_user_profiles("username", username)
+    def __init__(self, controller: CaloraController, io: IOManager, spinner_factory=ProgressSpinner):
+        self._controller = controller
+        self._io = io
+        self._spinner_factory = spinner_factory
 
-        name = users[list(users.keys())[0]].get("name", "User")
-        print(f"\nWelcome back, {name}! Let's continue with your meal plan.")
+    def run(self) -> None:
+        io = self._io
+        io.welcome()
+        username = io.prompt_username()
+        profile = self._controller.get_profile(username)
+        if profile is not None:
+            io.show_message(f"\nWelcome back, {profile.name}! Let's continue with your meal plan.")
+        else:
+            io.show_message(f"\nNo existing profile found for username: {username}. "
+                            "Lets create a new profile for you.")
+            profile = io.prompt_profile(username)
+            self._controller.register_profile(profile)
+            io.show_message("Profile setup complete!")
 
-        input_record = list(users.values())[0]  # Get the first (and only) user profile
-    else:
-        print(f"\nNo existing profile found for username: {username}. Lets create a new profile for you.")
-        
-        name = get_user_name()
-        age = get_user_age()
-        gender = get_user_gender()
-        weight_kg = get_user_weight()
-        height_cm = get_user_height()
-        activity_level = get_activity_level()
-        user_goal = get_user_goal()
-        dietary_restrictions = get_dietary_restrictions()
-
-        user_profile = [name, age, gender, weight_kg, height_cm, activity_level, user_goal, dietary_restrictions]  #store user profile in a list
-        print("Profile setup complete! Here is your profile information: ", user_profile)
-
-        # save user profile to JSON file
-        user_data = {
-            "username": username,
-            "name": name,
-            "age": age,
-            "gender": gender,
-            "weight_kg": weight_kg,
-            "height_cm": height_cm,
-            "activity_level": activity_level,
-            "goal": user_goal,
-            "dietary_restrictions": dietary_restrictions
-        }
-
-        save_user_profile(user_data)
-        input_record = user_data 
-    
-    while True:
-        user_option = option_list()  #get user option
-        if user_option == "1":
-            input_record = create_meal_plan(input_record, name)
-            meal_plan_option(input_record, name)  #create meal plan
-
-        elif user_option == "2":
-            meal_plans = get_meal_plans_by_user(input_record["username"])
-
-            if not meal_plans:
-                print("No meal plans found for this user.")
-                input("\nPress Enter to return to the main menu...")  # Pause before returning to the main menu
+        handlers = {"1": self._create_plan, "2": self._view_history,
+                    "3": self._view_profile, "4": self._update_profile}
+        while True:
+            choice = io.prompt_menu_choice()
+            if choice == "5":
+                io.show_message("Exiting the program. Goodbye!")
+                return
+            handler = handlers.get(choice)
+            if handler is None:
+                io.show_message("Please choose a number from 1 to 5.")
                 continue
+            profile = handler(profile)
 
-            for entry_id, meal_plan in meal_plans.items():
-                print(f"\nMeal Plan ID: {entry_id}\n{format_meal_plan(meal_plan)}")
-            input("Press Enter to return to the main menu...")  # Pause before returning to the main menu
+    def _create_plan(self, profile: UserProfile) -> UserProfile:
+        request = self._io.prompt_request(profile)
+        spinner = self._spinner_factory()
+        spinner.start()
+        try:
+            plan = self._controller.create_meal_plan(request)
+        except CaloraError as error:
+            spinner.stop()
+            self._io.show_message(f"Unable to generate a meal plan: {error}")
+            self._io.pause()
+            return profile
+        spinner.stop()
+        self._io.show_plan(plan)
+        shopping_list = self._controller.get_shopping_list(plan, request)
+        if request.meal_source != "out":
+            self._io.show_shopping_list(shopping_list)
+        self._io.pause()
+        return self._controller.get_profile(profile.username) or profile
 
-        elif user_option == "3":
-            user_data = load_user_profiles("username", username)
-            print(f"\nHere is your profile information:\n{format_user_data(user_data)}")
-            input("\nPress Enter to return to the main menu...")  # Pause before returning to the main menu
+    def _view_history(self, profile: UserProfile) -> UserProfile:
+        plans = self._controller.get_history(profile.username)
+        if not plans:
+            self._io.show_message("No meal plans found for this user.")
+        else:
+            self._io.show_history(plans)
+        self._io.pause()
+        return profile
 
-        elif user_option == "4":
-            # Add code to update the user's profile here
-            updated_data = {}
-            print("\nUpdate your profile information. Leave blank to keep current value.")
-            updated_data["name"] = get_user_name() or input_record["name"]
-            updated_data["age"] = get_user_age(allow_null=True) or input_record["age"]
-            updated_data["gender"] = get_user_gender(allow_null=True) or input_record["gender"]
-            updated_data["weight_kg"] = get_user_weight(allow_null=True) or input_record["weight_kg"]
-            updated_data["height_cm"] = get_user_height(allow_null=True) or input_record["height_cm"]
-            updated_data["activity_level"] = get_activity_level(allow_null=True) or input_record["activity_level"]
-            updated_data["goal"] = get_user_goal(allow_null=True) or input_record["goal"]
-            updated_data["dietary_restrictions"] = get_dietary_restrictions(allow_null=True) or input_record["dietary_restrictions"]
+    def _view_profile(self, profile: UserProfile) -> UserProfile:
+        self._io.show_profile(profile)
+        self._io.pause()
+        return profile
 
-            update_user_profile(input_record["username"], updated_data)
-            input_record.update(updated_data)
-            input("\nPress Enter to return to the main menu...")  # Pause before returning to the main menu
+    def _update_profile(self, profile: UserProfile) -> UserProfile:
+        changes = self._io.prompt_profile_changes(profile)
+        updated = profile.updated_with(changes)
+        self._controller.update_profile(profile.username, updated)
+        self._io.pause()
+        return updated
 
-        elif user_option == "5":
-            print("Exiting the program. Goodbye!")
-            break
+    @staticmethod
+    def main(controller: Optional[CaloraController] = None) -> None:
+        load_dotenv()
+        logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
+        CliApp(controller or AppFactory.build_controller(), IOManager()).run()
 
 
-def meal_plan_option(input_record, name):
-    # ----- AI LAYER -----
-    ai_output = call_ai(input_record) # Send input_record to Gemini through ai_manager
-
-    # Stop the program if the AI request failed
-    if ai_output is None:
-        print("Unable to generate meal recommendations.")
-        return
-    
-    recommendations = ai_output.get("recommendations", [])
-
-    # ----- LOGIC LAYER -----
-    plan = build_meal_plan(recommendations, input_record) # Build a meal plan based on the AI recommendations and user input
-    
-    # read meal plan for testing
-    # with open("meal_plan.json", "r") as f:
-    #     plan = json.load(f)
-
-    if plan is None:
-        print("Unable to build a meal plan from the AI recommendations.")
-        input("\nPress Enter to return to the main menu...")  # Pause before returning to the main menu
-
-        return
-
-    save_meal_plan(plan, input_record["username"])  # Save the meal plan to a JSON file
-
-    print(format_meal_plan(plan))
-    input("\nPress Enter to return to the main menu...")  # Pause before returning to the main menu
-
-# Run the program
 if __name__ == "__main__":
-    main()
-    
+    CliApp.main()
