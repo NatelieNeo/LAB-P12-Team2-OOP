@@ -15,6 +15,9 @@ class CliApp:
     """Terminal user interface. It owns no business logic: it asks the
     IOManager for input and output and the controller for the work."""
 
+    def hello_world(self) -> None:
+        print("Hello, world!")
+
     def __init__(self, controller: CaloraController, io: IOManager, spinner_factory=ProgressSpinner):
         self._controller = controller
         self._io = io
