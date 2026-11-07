@@ -90,4 +90,24 @@ class UserInputValidator:
                 f"Please enter one of the following meal sources: {', '.join(self.MEAL_SOURCES)}."
             )
         return value
+
+    def validate_budget(self, raw: Any) -> Optional[float]:
+        #blank/0 means no budget
+        text = str(raw if raw is not None else "").strip()
+        if not text:
+            return None
+        try:
+            value = float(text)
+        except ValueError:
+            raise InvalidInputError("Please enter your budget as a number.") from None
+        if value == 0:
+            return None
+        if value < self.MIN_BUDGET:
+            raise InvalidInputError(f"Please enter a budget of at least ${self.MIN_BUDGET}.")   
+        return value
+
+    def parse_list(self, raw: Any) -> List[str]:
+        return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+    
+        
         
