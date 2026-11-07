@@ -25,3 +25,19 @@ class UserInputValidator:
             raise InvalidInputError("Please enter a valid name.")
         return value
 
+    def validate_age(self, raw: Any) -> int:
+        try:
+            age = int(str(raw or "").strip())
+        except ValueError:
+            raise InvalidInputError("Please enter a whole number.")
+        if not 12 < age < 100:
+            raise InvalidInputError("Please enter a valid age between 13 and 99.")
+        return age
+
+    def validate_gender(self, raw: Any) -> str:
+        value = str(raw or "").strip().upper()
+        if value not in ("M", "F"):
+            raise InvalidInputError("Please enter M or F for gender.")
+        return "male" if value == "M" else "female"
+
+    
