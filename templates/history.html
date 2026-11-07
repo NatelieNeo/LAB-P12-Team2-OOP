@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="brand"><span class="mark">Calora / history</span><div class="header-actions"><span class="date">Signed in as {{ username }}</span><form method="post" action="/logout" class="logout-form"><button class="icon-link" type="submit" title="Log out" aria-label="Log out">↪</button></form></div></header>
+<h1>Previously generated meal plans</h1><p class="lede">Open a meal plan below to review the meals Calora generated for you.</p>
+{% if not meal_plans %}<p class="notice">No meal plans found for this username.</p>{% else %}{% for result in meal_plans %}<details><summary>Meal plan {{ loop.index }}</summary><div class="accordion-content">{% include "_plan_content.html" %}</div></details>{% endfor %}{% endif %}
+<p><a href="/profile">Back to profile</a></p>
+{% endblock %}
