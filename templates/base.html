@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Calora meal planner{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main>{% block content %}{% endblock %}</main>
+    <div class="loader" id="plan-loader" role="status" aria-live="polite" aria-label="Generating meal plan">
+        <div class="loader-card">
+            <div class="spinner" aria-hidden="true"></div>
+            <strong>Generating your meal plan...</strong>
+            <span>Please wait while Calora prepares your recommendations.</span>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
