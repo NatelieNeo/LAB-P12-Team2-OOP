@@ -78,3 +78,14 @@ class DietarySafetyRule(MealRule):
             if not any(self._contains_term(text, term) for term in banned_terms for text in haystack):
                 safe.append(candidate)
         return safe
+
+class SourcePreferenceRule(MealRule):
+    """Honours "eat in only" / "eat out only". It is a soft preference: if it
+    would leave a slot empty, the unfiltered candidates are kept so a safe dish
+    of the other source still gets ranked."""
+
+    def apply(self, candidates: List[MealCandidate], request: MealPlanRequest) -> List[MealCandidate]:
+        if request.meal_source == "both":
+            return list(candidates)
+        preferred = [c for c in candidates if c.source_type == request.meal_source]
+        return preferred if preferred else list(candidates)
