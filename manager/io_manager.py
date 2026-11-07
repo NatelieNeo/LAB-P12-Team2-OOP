@@ -108,6 +108,25 @@ class UserInputValidator:
 
     def parse_list(self, raw: Any) -> List[str]:
         return [item.strip() for item in str(raw or "").split(",") if item.strip()]
-    
-        
+
+
+class IOManager:
+    #reads inputs and shows output for the terminal, turns web form data into model objects
+
+
+    ALLERGEN_NOTICE = ("Always check food labels and ask the stall about allergens. "
+                        "Calora cannot guarantee the absence of allergens.")
+    MENU = ("1. Create a meal plan\n"
+            "2. View your previous meal plans\n"
+            "3. View your profile\n"
+            "4. Update your profile\n"
+            "5. Exit\n")
+    SLOT_ORDER = MealPlan.SLOTS
+
+    def __init__(self, validator: Optional[UserInputValidator] = None,
+        input_fn: Callable[[str], str] = input, output_fn: Callable[..., None] = print):
+        self.validator = validator or UserInputValidator()
+        self.input = input_fn
+        self.output = output_fn
+
         
