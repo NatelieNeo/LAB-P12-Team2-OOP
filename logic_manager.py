@@ -156,3 +156,56 @@ class CostCriterion(RankingCriterion):
     def score(self, candidate, targets, request) -> float:
         cost = candidate.estimated_cost
         return float("inf") if cost is None else cost
+
+
+class LogicManager:
+    """Builds a day's meal plan from the AI's candidates.
+
+    The rules and ranking criteria are injected (aggregation): adding a new
+    rule or criterion needs a new class, not a change to this one (OCP)."""
+
+    def __init__(self, rules: Optional[List[MealRule]] = None,
+                 criteria: Optional[List[RankingCriterion]] = None,
+                 calculator: Optional[NutritionCalculator] = None,
+                 tagger: Optional[MealTagger] = None):
+        self._rules = rules if rules is not None else [DietarySafetyRule(), SourcePreferenceRule()]
+        self._criteria = criteria if criteria is not None else [
+            CalorieFitCriterion(), MacroFitCriterion(), PreferenceCriterion(), CostCriterion()]
+        self._calculator = calculator or NutritionCalculator()
+        self._tagger = tagger or MealTagger()
+
+    def calculate_targets(self, profile: UserProfile) -> NutritionTargets:
+        return self._calculator.targets(profile)
+
+    def group_by_slot(self, candidates: List[MealCandidate]) -> Dict[str, List[MealCandidate]]:
+        """Split the flat list into breakfast/lunch/dinner. Any other meal type
+        (e.g. "snack") is dropped, not folded into a real slot."""
+        grouped = {slot: [] for slot in MealPlan.SLOTS}
+        for candidate in candidates or []:
+            if candidate.slot in grouped:
+                grouped[candidate.slot].append(candidate)
+        return grouped
+
+    def rank_slot(self, candidates: List[MealCandidate], targets: NutritionTargets,
+                  request: MealPlanRequest) -> List[MealCandidate]:
+        """Filter one slot's candidates through every rule, then sort them by the
+        criteria in priority order (calorie fit, macro fit, preference, cost)."""
+        pool = list(candidates)
+        for rule in self._rules:
+            pool = rule.apply(pool, request)
+        return sorted(pool, key=lambda c: tuple(
+            criterion.score(c, targets, request) for criterion in self._criteria))
+
+    def build_meal_plan(self, candidates: List[MealCandidate], request: MealPlanRequest) -> Optional[MealPlan]:
+        """One dish per slot. Returns None only if every slot ends up empty;
+        otherwise a (possibly partial) plan that reports its missing slots."""
+        targets = self.calculate_targets(request.profile)
+        grouped = self.group_by_slot(candidates)
+        plan = MealPlan(targets.daily_calories, request.daily_budget)
+        for slot in MealPlan.SLOTS:
+            ranked = self.rank_slot(grouped[slot], targets, request)
+            if ranked:
+                plan.add_meal(self._tagger.annotate(ranked[0], targets))
+            else:
+                plan.mark_missing(slot)
+        return plan if plan.meals else None
