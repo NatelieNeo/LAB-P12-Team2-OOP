@@ -280,6 +280,31 @@ class IOManager:
 
     def show_shopping_list(self, shopping_list: ShoppingList) -> None:
         self._output("\n" + shopping_list.to_text())
-        
-         
 
+
+    #web forms
+    def read_profile_form(self, form: Mapping[str, str], username: Optional[str] = None) -> UserProfile:
+        #Validate the profile part of a web form. Raises InvalidInputError
+        v = self._validator
+        return UserProfile(
+            username=v.validate_username(username if username is not None else form.get("username")),
+            name=v.validate_name(form.get("name")),
+            age=v.validate_age(form.get("age")),
+            gender=v.validate_gender(form.get("gender")),
+            weight_kg=v.validate_weight(form.get("weight_kg")),
+            height_cm=v.validate_height(form.get("height_cm")),
+            activity_level=v.validate_activity_level(form.get("activity_level")),
+            goal=v.validate_goal(form.get("goal")),
+            dietary_restrictions=v.validate_restrictions(form.get("dietary_restrictions")),
+        )         
+
+    def read_request_form(self, form: Mapping[str, str], profile: UserProfile) -> MealPlanRequest:
+        #validate the preferences on web
+        v = self._validator
+        source = v.validate_meal_source(form.get("meal_source") or "both")
+        pantry = [] if source == "out" else v.parse_list(form.get("ingredients"))
+        return MealPlanRequest(
+            profile,
+            v.validate_meal_preference(form.get("meal_preference")),
+            source, pantry, v.validate_budget(form.get("budget")),
+        )
