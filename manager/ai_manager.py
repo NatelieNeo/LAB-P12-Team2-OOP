@@ -60,3 +60,25 @@ class GeminiProvider(AIProvider):
         except Exception as error:
             raise AIConnectionError(f"Gemini request failed: {error}") from error
         return response.text
+
+
+# Offline provider for tests and demos, replays canned responses in order
+# (the last one repeats). If an item is an Exception, it gets raised instead
+class StubAIProvider(AIProvider):
+
+    def __init__(self, responses: Union[str, Exception, Sequence[Union[str, Exception]]]):
+        single = isinstance(responses, (str, Exception))
+        self._responses = [responses] if single else list(responses)
+        self._calls = 0
+
+    # how many times generate() has been called
+    @property
+    def call_count(self) -> int:
+        return self._calls
+
+    def generate(self, prompt: str) -> str:
+        item = self._responses[min(self._calls, len(self._responses) - 1)]
+        self._calls += 1
+        if isinstance(item, Exception):
+            raise item
+        return item
