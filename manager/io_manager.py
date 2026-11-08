@@ -1,6 +1,8 @@
 from typing import Any, Callable, Dict, List, Mapping, Optional
 from wsgiref.validate import validator
 
+from altair import value
+
 from manager.exceptions import InvalidInputError
 from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
 
@@ -178,8 +180,28 @@ class IOManager:
             
         )
 
-    
+    def prompt_profile_changes(self, current: UserProfile) -> Dict[str,Any]:
+    #ask for each field agn, nil means no change
+        v = self._validator
+        self._output("\nUpdate your profile. Leave blank to keep current value.\n")    
+        fields = (
+            ("name", "Please enter your name: ", v.validate_name),
+            ("age", "Please enter your age: ", v.validate_age),
+            ("gender", "Please enter your gender (M/F): ", v.validate_gender),
+            ("weight", "Please enter your weight (kg): ", v.validate_weight),
+            ("height", "Please enter your height (cm): ", v.validate_height),
+            ("activity_level", "Please enter your activity level (sedentary, moderately active, very active): ", v.validate_activity_level),
+            ("goal", "Please enter your goal (lose, maintain, gain): ", v.validate_goal),
+            ("dietary_restrictions", "Please enter any dietary restrictions (comma-separated, or leave blank): ", v.validate_restrictions)
+        )
+        changes = {}
+        for field, prompt, validate in fields:
+            answer = self._ask(prompt, validate, allow_blank=True)
+            if answer is not None:
+                changes[field] = answer
+        return changes
 
+    
 
                       
 
