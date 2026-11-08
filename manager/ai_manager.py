@@ -1,4 +1,4 @@
-# AI Manager: builds the prompt, calls an AI provider, retries, and hands back candidates
+# AI Manager: builds the prompt, calls an AI provider, retries, and hands back candidates.
 import logging
 import os
 import time
@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Sequence, Union
 
 from config import GEMINI_MODEL, MAX_RETRIES, RETRY_DELAY_SECONDS
-# Changed from parse_response() function to AIHandlerManager class
 from manager.ai_handler_manager import AIHandlerManager
 from manager.exceptions import AIConnectionError, AIResponseError
 from manager.models import MealCandidate, MealPlanRequest, NutritionTargets
@@ -14,29 +13,24 @@ from manager.models import MealCandidate, MealPlanRequest, NutritionTargets
 logger = logging.getLogger(__name__)
 
 
-# Any AI provider just needs to turn a prompt into response text
-# Changed from AIClient to AIProvider
+# Interface: anything that can turn a prompt into response text.
 class AIProvider(ABC):
 
     @abstractmethod
     def generate(self, prompt: str) -> str:
-        # should raise AIConnectionError if the AI can't be reached
+        # Return the model's raw text. Raise AIConnectionError if it cannot be reached.
         pass
 
 
-# Talks to Google Gemini, API key is kept private
-# Changed from GeminiClient to GeminiProvider
+# Talks to Google Gemini. The API key is private and read from the environment.
 class GeminiProvider(AIProvider):
 
-    # Changed from load_dotenv() + required key in __init__ to optional api_key argument
     def __init__(self, api_key: Optional[str] = None, model: str = GEMINI_MODEL):
         self.__api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
         self._model = model
         self._client = None
 
-    # Changed from creating the client in __init__ to creating it on first use
     def _get_client(self):
-        # Changed from raising ValueError to raising AIConnectionError
         if not self.__api_key:
             raise AIConnectionError("GEMINI_API_KEY was not found. Add it to your .env file.", retryable=False)
         if self._client is None:
@@ -49,12 +43,10 @@ class GeminiProvider(AIProvider):
 
     def generate(self, prompt: str) -> str:
         client = self._get_client()
-        # Changed from letting API errors bubble up to raising AIConnectionError
         try:
             response = client.models.generate_content(
                 model=self._model,
                 contents=prompt,
-                # Changed from only response_mime_type to also setting temperature and seed
                 config={"response_mime_type": "application/json", "temperature": 1, "seed": 42},
             )
         except Exception as error:
@@ -62,8 +54,8 @@ class GeminiProvider(AIProvider):
         return response.text
 
 
-# Offline provider for tests and demos, replays canned responses in order
-# (the last one repeats). If an item is an Exception, it gets raised instead
+# Offline provider for tests and demos: replays canned responses in order
+# (the last one repeats). An Exception instance in the list is raised instead.
 class StubAIProvider(AIProvider):
 
     def __init__(self, responses: Union[str, Exception, Sequence[Union[str, Exception]]]):
@@ -71,7 +63,6 @@ class StubAIProvider(AIProvider):
         self._responses = [responses] if single else list(responses)
         self._calls = 0
 
-    # how many times generate() has been called
     @property
     def call_count(self) -> int:
         return self._calls
@@ -84,11 +75,9 @@ class StubAIProvider(AIProvider):
         return item
 
 
-# Builds the Gemini prompt from the request and the app-calculated targets
-# Changed from MealPromptBuilder(PromptBuilder) in meal_prompt_builder.py to one PromptBuilder class here
+# Builds the Gemini prompt from a request and the application-calculated targets.
 class PromptBuilder:
 
-    # Changed from an f-string inside build() to a class-level template filled with .format()
     TEMPLATE = """
 You are the meal recommendation engine for Calora, a Singapore-based personalised meal planning application.
 
@@ -283,7 +272,6 @@ Use exactly the following structure:
 }}
 """
 
-    # Changed from dict input_record to MealPlanRequest + NutritionTargets objects
     def build(self, request: MealPlanRequest, targets: NutritionTargets) -> str:
         profile = request.profile
         daily, meal = targets.daily_macros, targets.per_meal_macros
@@ -303,13 +291,13 @@ Use exactly the following structure:
         )
 
 
-# Gets meal candidates from an AI provider, retrying on failure
-# provider is passed in (aggregation) so Gemini can be swapped for the stub,
-# prompt builder is owned by this manager (composition)
+# Gets meal candidates from an AI provider, retrying on failure.
+#
+# The provider is injected (aggregation), so Gemini can be swapped for the
+# offline stub without changing this class. The prompt builder is owned by
+# this manager (composition).
 class AIManager:
 
-    # Changed from client + max_retries to provider, handler, prompt_builder and retry_delay
-    # Changed from always creating MealPromptBuilder() to accepting one or making a default
     def __init__(self, provider: AIProvider, handler: Optional[AIHandlerManager] = None,
                  prompt_builder: Optional[PromptBuilder] = None,
                  max_retries: int = MAX_RETRIES, retry_delay: float = RETRY_DELAY_SECONDS):
@@ -319,23 +307,17 @@ class AIManager:
         self._max_retries = max_retries
         self._retry_delay = retry_delay
 
-    # raises AIConnectionError or AIResponseError once every attempt has failed
-    # Changed from dict input_record to MealPlanRequest + NutritionTargets objects
-    # Changed from returning a dict or None to returning a list of MealCandidate
-    # Changed from a separate __attempt() method to the try/except inside this loop
+    # Raises AIConnectionError or AIResponseError once every attempt has failed.
     def get_recommendations(self, request: MealPlanRequest, targets: NutritionTargets) -> List[MealCandidate]:
         prompt = self._prompt_builder.build(request, targets)
         last_error: Exception = AIResponseError("No attempt was made.")
         for attempt in range(1, self._max_retries + 1):
             logger.info("Calling the AI provider - attempt %s/%s", attempt, self._max_retries)
             try:
-                # Changed from saving raw text to ai_response.json to not saving it
                 text = self._provider.generate(prompt)
-                # Changed from parse_response() returning None to handler raising AIResponseError
                 candidates = self._handler.parse_response(text)
                 logger.info("AI response successfully validated.")
                 return candidates
-            # Changed from catching every Exception to catching connection and response errors separately
             except AIConnectionError as error:
                 last_error = error
                 logger.error("AI connection problem on attempt %s: %s", attempt, error)
@@ -347,5 +329,4 @@ class AIManager:
             if attempt < self._max_retries and self._retry_delay:
                 time.sleep(self._retry_delay)
         logger.error("AI request failed after %s attempts.", self._max_retries)
-        # Changed from returning None to raising the last error
         raise last_error
