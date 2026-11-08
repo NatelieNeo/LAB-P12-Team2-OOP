@@ -267,5 +267,19 @@ class IOManager:
             lines.extend(["", notice])
         return "\n".join(lines)
 
-    
-                    
+    def format_profile(self, profile: UserProfile) -> str:
+        data = profile.to_dict(include_preferences=False)
+        data["dietary_restrictions"] = ", ".join(data["dietary_restrictions"]) or "none"
+        return "\n".join(f"{key.replace('_',' ').capitalize()}: {value}" for key, value in data.items())
+
+    def show_plan(self, plan: MealPlan) -> None:
+        self._output(self.format_plan(plan))
+
+    def show_profile(self, profile: UserProfile) -> None:
+        self._output(f"\nHere is your profile information:\n{self.format_profile(profile)}")
+
+    def show_shopping_list(self, shopping_list: ShoppingList) -> None:
+        self._output("\n" + shopping_list.to_text())
+        
+         
+
