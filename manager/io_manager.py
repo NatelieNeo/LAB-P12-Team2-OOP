@@ -1,4 +1,5 @@
 from typing import Any, Callable, Dict, List, Mapping, Optional
+from wsgiref.validate import validator
 
 from manager.exceptions import InvalidInputError
 from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
@@ -125,8 +126,27 @@ class IOManager:
 
     def __init__(self, validator: Optional[UserInputValidator] = None,
         input_fn: Callable[[str], str] = input, output_fn: Callable[..., None] = print):
-        self.validator = validator or UserInputValidator()
-        self.input = input_fn
-        self.output = output_fn
+        self._validator = validator or UserInputValidator()
+        self._input = input_fn
+        self._output = output_fn
+
+
+    #terminal input
+
+    def ask_user(self, prompt: str, validate: Callable[[str], Any], allow_blank: bool = False) -> Any:
+        while True:
+            raw = self._input(prompt)
+            if allow_blank and raw.strip() == "":
+                return None
+            try:
+                return validate(raw)
+            except InvalidInputError as error:
+                self._output(f"Error: {error}") 
+
+    def welcome(self) -> None:
+        self._output("Welcome to Calora! Your personal meal planning assistant.\n")
+        self._output("I can help you track your health and fitness goals.\n")
+        self._output(self.ALLERGEN_NOTICE)
+                      
 
         
