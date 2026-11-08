@@ -301,3 +301,51 @@ Use exactly the following structure:
             per_meal_calories=targets.per_meal_calories,
             meal_protein=meal["protein_g"], meal_carbs=meal["carbs_g"], meal_fat=meal["fat_g"],
         )
+
+
+# Gets meal candidates from an AI provider, retrying on failure
+# provider is passed in (aggregation) so Gemini can be swapped for the stub,
+# prompt builder is owned by this manager (composition)
+class AIManager:
+
+    # Changed from client + max_retries to provider, handler, prompt_builder and retry_delay
+    # Changed from always creating MealPromptBuilder() to accepting one or making a default
+    def __init__(self, provider: AIProvider, handler: Optional[AIHandlerManager] = None,
+                 prompt_builder: Optional[PromptBuilder] = None,
+                 max_retries: int = MAX_RETRIES, retry_delay: float = RETRY_DELAY_SECONDS):
+        self._provider = provider
+        self._handler = handler or AIHandlerManager()
+        self._prompt_builder = prompt_builder or PromptBuilder()
+        self._max_retries = max_retries
+        self._retry_delay = retry_delay
+
+    # raises AIConnectionError or AIResponseError once every attempt has failed
+    # Changed from dict input_record to MealPlanRequest + NutritionTargets objects
+    # Changed from returning a dict or None to returning a list of MealCandidate
+    # Changed from a separate __attempt() method to the try/except inside this loop
+    def get_recommendations(self, request: MealPlanRequest, targets: NutritionTargets) -> List[MealCandidate]:
+        prompt = self._prompt_builder.build(request, targets)
+        last_error: Exception = AIResponseError("No attempt was made.")
+        for attempt in range(1, self._max_retries + 1):
+            logger.info("Calling the AI provider - attempt %s/%s", attempt, self._max_retries)
+            try:
+                # Changed from saving raw text to ai_response.json to not saving it
+                text = self._provider.generate(prompt)
+                # Changed from parse_response() returning None to handler raising AIResponseError
+                candidates = self._handler.parse_response(text)
+                logger.info("AI response successfully validated.")
+                return candidates
+            # Changed from catching every Exception to catching connection and response errors separately
+            except AIConnectionError as error:
+                last_error = error
+                logger.error("AI connection problem on attempt %s: %s", attempt, error)
+                if not error.retryable:
+                    raise
+            except AIResponseError as error:
+                last_error = error
+                logger.warning("Invalid AI response on attempt %s: %s", attempt, error)
+            if attempt < self._max_retries and self._retry_delay:
+                time.sleep(self._retry_delay)
+        logger.error("AI request failed after %s attempts.", self._max_retries)
+        # Changed from returning None to raising the last error
+        raise last_error
