@@ -1,113 +1,62 @@
-import os
+# AI Manager: builds the prompt, calls an AI provider, retries, and hands back candidates
 import logging
+import os
+import time
 from abc import ABC, abstractmethod
+from typing import List, Optional, Sequence, Union
 
-from dotenv import load_dotenv
-from google import genai
-
-from config import GEMINI_MODEL, MAX_RETRIES
-from manager.ai_handler_manager import parse_response
-from manager.meal_prompt_builder import MealPromptBuilder
+from config import GEMINI_MODEL, MAX_RETRIES, RETRY_DELAY_SECONDS
+# Changed from parse_response() function to AIHandlerManager class
+from manager.ai_handler_manager import AIHandlerManager
+from manager.exceptions import AIConnectionError, AIResponseError
+from manager.models import MealCandidate, MealPlanRequest, NutritionTargets
 
 logger = logging.getLogger(__name__)
 
 
-# Any AI client needs a generate() method that returns the raw response text
-class AIClient(ABC):
+# Any AI provider just needs to turn a prompt into response text
+# Changed from AIClient to AIProvider
+class AIProvider(ABC):
 
     @abstractmethod
-    def generate(self, prompt):
+    def generate(self, prompt: str) -> str:
+        # should raise AIConnectionError if the AI can't be reached
         pass
 
 
-# Handles talking to the Gemini API
-class GeminiClient(AIClient):
+# Talks to Google Gemini, API key is kept private
+# Changed from GeminiClient to GeminiProvider
+class GeminiProvider(AIProvider):
 
-    def __init__(self, model=GEMINI_MODEL):
-        load_dotenv() # Load environment variables from .env file
+    # Changed from load_dotenv() + required key in __init__ to optional api_key argument
+    def __init__(self, api_key: Optional[str] = None, model: str = GEMINI_MODEL):
+        self.__api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
+        self._model = model
+        self._client = None
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY was not found in the .env file.")
+    # Changed from creating the client in __init__ to creating it on first use
+    def _get_client(self):
+        # Changed from raising ValueError to raising AIConnectionError
+        if not self.__api_key:
+            raise AIConnectionError("GEMINI_API_KEY was not found. Add it to your .env file.", retryable=False)
+        if self._client is None:
+            try:
+                from google import genai
+                self._client = genai.Client(api_key=self.__api_key)
+            except Exception as error:
+                raise AIConnectionError(f"Failed to initialise the Gemini client: {error}", retryable=False) from error
+        return self._client
 
-        self.__model = model
-        self.__client = genai.Client(api_key=api_key)
-
-    @property
-    def model(self):
-        return self.__model
-    
-    def generate(self, prompt):
-        response = self.__client.models.generate_content(
-            model=self.__model,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json"
-            }
-        )
-        return response.text
-
-
-# Builds the prompt, calls the AI and retries if the response is invalid
-class AIManager:
-
-    def __init__(self, client, max_retries=MAX_RETRIES):
-        self.__client = client  # passed in GeminiClient()
-        self.__prompt_builder = MealPromptBuilder()
-        self.__max_retries = max_retries
-
-    @property
-    def max_retries(self):
-        return self.__max_retries
-
-    # Returns the recommendations dict, or None if all attempts fail
-    def get_recommendations(self, input_record):
-        prompt = self.__prompt_builder.build(input_record)
-
-        for attempt in range(1, self.__max_retries + 1):
-            result = self.__attempt(prompt, attempt)
-
-            if result is not None:
-                logger.info("AI response successfully validated.")
-                return result
-
-        logger.error(
-            "AI request failed after %s attempts.",
-            self.__max_retries
-        )
-        return None
-
-    # Save the raw response so we can check it when debugging
-    def __save_raw_response(self, raw_text):
-        with open("ai_response.json", "w") as f:
-            f.write(raw_text)
-
-    # One call to the AI, returns the validated dict or None
-    def __attempt(self, prompt, attempt):
+    def generate(self, prompt: str) -> str:
+        client = self._get_client()
+        # Changed from letting API errors bubble up to raising AIConnectionError
         try:
-            logger.info(
-                "Calling AI API - attempt %s/%s",
-                attempt,
-                self.__max_retries
+            response = client.models.generate_content(
+                model=self._model,
+                contents=prompt,
+                # Changed from only response_mime_type to also setting temperature and seed
+                config={"response_mime_type": "application/json", "temperature": 1, "seed": 42},
             )
-
-            raw_text = self.__client.generate(prompt)
-            self.__save_raw_response(raw_text)
-
-            # convert the response to JSON and validate it
-            result = parse_response(raw_text)
-
-            if result is None:
-                logger.warning(
-                    "Invalid AI response on attempt %s.",
-                    attempt
-                )
-            return result
-
         except Exception as error:
-            logger.error(
-                "AI API error on attempt %s: %s",
-                attempt,
-                error
-            )
-            return None
+            raise AIConnectionError(f"Gemini request failed: {error}") from error
+        return response.text
