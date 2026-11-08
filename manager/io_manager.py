@@ -201,8 +201,29 @@ class IOManager:
                 changes[field] = answer
         return changes
 
+    def prompt_request(self, profile: UserProfile) -> MealPlanRequest:
+        v = self._validator
+        self._output("\nLet's create a meal plan for you.\n")
+        meal_preference = self._ask("Please enter your meal preference (e.g., vegetarian, low-carb, etc.): ", v.validate_meal_preference)
+        self._output(f"Great! You prefer {meal_preference} meals.\n")
+        meal_source = self._ask("Do you want to eat in, out, or both? Enter in/out/both ", v.validate_meal_source)
+        self._output(f"Got it! You want to eat {meal_source}.\n")
+        pantry: List[str] = []
+        if meal_source != "out": #only if eating in or both, ask for pantry items
+            pantry = v.parse_list(self._input("Please enter your pantry items (comma-separated, or leave blank): "))
+            self._output(f"Thanks! You have {len(pantry)} items in your pantry.\n")
+        budget = self._ask(f"Please enter your budget (minimum ${v.MIN_BUDGET}) (or leave blank for no budget): ",
+        v.validate_budget, allow_blank=True)
+        self._output(f"Got it! Your budget is {budget}.\n")
+        return MealPlanRequest(
+            profile=profile,
+            meal_source=meal_source,
+            budget=budget,
+            meal_preference=meal_preference,
+            pantry=pantry
+        )
     
-
+    
                       
 
         
