@@ -63,3 +63,24 @@ class CaloraController:
 
     def get_plan_job(self, job_id: str) -> Optional[PlanJob]:
         return self._jobs.get(job_id)
+
+
+# Builds the real, wired-up object graph.
+class AppFactory:
+
+    @staticmethod
+    def build_data_manager(backend: Optional[str] = None) -> DataManager:
+        backend = (backend or config.STORAGE_BACKEND).lower()
+        if backend == "sqlite":
+            return SqliteDataManager()
+        return JsonDataManager()
+
+    @staticmethod
+    def build_controller(provider: Optional[AIProvider] = None, data: Optional[DataManager] = None,
+                         jobs: Optional[PlanJobManager] = None) -> CaloraController:
+        return CaloraController(
+            ai=AIManager(provider or GeminiProvider()),
+            logic=LogicManager(),
+            data=data or AppFactory.build_data_manager(),
+            jobs=jobs or PlanJobManager(),
+        )
