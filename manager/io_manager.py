@@ -147,6 +147,40 @@ class IOManager:
         self._output("Welcome to Calora! Your personal meal planning assistant.\n")
         self._output("I can help you track your health and fitness goals.\n")
         self._output(self.ALLERGEN_NOTICE)
+
+    def read_username(self, raw: Any) -> str: #validate username from web form
+        return self._validator.validate_username(raw)    
+
+    def prompt_username(self) -> str: #validate username from terminal
+        return self.ask_user("Enter your username: ", self._validator.validate_username)
+
+    def prompt_profile(self, username: str) -> UserProfile:
+        v = self._validator
+        name = self._ask("Please enter your name: ", v.validate_name)
+        self._output(f"Hello, {name}! Nice to meet you.\n")
+        age = self._ask("Please enter your age: ", v.validate_age)
+        gender = self._ask("Please enter your gender (M/F): ", v.validate_gender)
+        weight = self._ask("Please enter your weight (kg): ", v.validate_weight)
+        height = self._ask("Please enter your height (cm): ", v.validate_height)
+        activity_level = self._ask("Please enter your activity level (sedentary, moderately active, very active): ", v.validate_activity_level)
+        goal = self._ask("Please enter your goal (lose, maintain, gain): ", v.validate_goal)
+        restrictions = self._ask("Please enter any dietary restrictions (comma-separated, or leave blank): ", v.validate_restrictions, allow_blank=True)
+        return UserProfile(
+            username=username,
+            name=name,
+            age=age,
+            gender=gender,
+            weight=weight,
+            height=height,
+            activity_level=activity_level,
+            goal=goal,
+            restrictions=restrictions,
+            
+        )
+
+    
+
+
                       
 
         
