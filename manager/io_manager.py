@@ -223,7 +223,49 @@ class IOManager:
             pantry=pantry
         )
     
-    
-                      
-
+    def prompt_menu_choice(self) -> str:
+        for line in self.MENU:
+            self._output(line)
+        return self._input("\nPlease enter your choice (1-5): ").strip()
         
+    def pause(self) -> None:
+        self._input("\nPress Enter to return to the main menu...")
+
+    # terminal output
+    def show_message(self, message: Any) -> None:
+        self._output(message)
+
+    def allergen_notice(self, plan: MealPlan) -> str: #disclaimer for eating out, if any meal is from outside
+        if any(meal.source_type == "eat_out" for meal in plan.meals.values()):
+
+            return self.ALLERGEN_NOTICE
+        return ""
+
+    def format_plan(self, plan: MealPlan) -> str:
+        data = plan.to_dict()
+        lines = ["=== Your Meal Plan ===", f"Why this plan: {data['explanation']} "]
+
+        for slot in self.SLOT_ORDER:
+            meal = data["meals"].get(slot)
+            if meal is None:
+                continue
+            lines.extend([
+                 "",
+                    f"{slot.capitalize()}: {meal.name} ({meal.source_type})",
+                    f"Calories: {meal['calorie_range']} {meal['calorie_tag']} for your target",                       
+                    f"Macros: Protein {meal['protein_tag']} / Carbs {meal['carbs_tag']} / Fat {meal['fat_tag']}" 
+                            
+            ])
+
+            if meal["pantry_ingredients_used"]:
+                lines.append("Ingredients: " + ", ".join(plan.meals[slot].ingredients_labels))
+            lines.append(f"Cost: {meal['cost_tier']}")
+        if data["missing_slots"]:
+            lines.extend(["","Missing meals: " + ", ".join(data["missing_slots"])])
+        notice = self.allergen_notice(plan)
+        if notice:
+            lines.extend(["", notice])
+        return "\n".join(lines)
+
+    
+                    
