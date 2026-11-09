@@ -41,6 +41,26 @@ class NutritionCalculator:
 
     def per_meal_calorie_target(self, daily_calorie_target: float) -> float:
         return daily_calorie_target / self.MEALS_PER_DAY
+
+    def macro_targets(self, calories: float, goal: str) -> Dict[str, float]:
+        """Grams of protein/carbs/fat for a calorie figure (4, 4 and 9 kcal per gram)."""
+        split = self.MACRO_SPLITS.get(goal, self.MACRO_SPLITS["maintain"])
+        return {
+            "protein_g": round((calories * split["protein"]) / 4, 1),
+            "carbs_g": round((calories * split["carbs"]) / 4, 1),
+            "fat_g": round((calories * split["fat"]) / 9, 1),
+        }
+
+    def targets(self, profile: UserProfile) -> NutritionTargets:
+        bmr = self.bmr(profile)
+        tdee = self.tdee(profile)
+        daily = self.daily_calorie_target(tdee, profile.goal)
+        per_meal = self.per_meal_calorie_target(daily)
+        return NutritionTargets(
+            bmr=bmr, tdee=tdee, daily_calories=daily, per_meal_calories=per_meal,
+            daily_macros=self.macro_targets(daily, profile.goal),
+            per_meal_macros=self.macro_targets(per_meal, profile.goal),
+        )
     
 # ---------------------------------------------------------------------
 # Business rules: interface + implementations
