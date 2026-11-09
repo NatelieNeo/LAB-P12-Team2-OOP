@@ -36,7 +36,12 @@ class NutritionCalculator:
             profile.activity_level, self.ACTIVITY_MULTIPLIERS["sedentary"])
         return self.bmr(profile) * multiplier
 
+    def daily_calorie_target(self, tdee: float, goal: str) -> float:
+        return tdee + self.GOAL_ADJUSTMENTS.get(goal, 0)
 
+    def per_meal_calorie_target(self, daily_calorie_target: float) -> float:
+        return daily_calorie_target / self.MEALS_PER_DAY
+    
 # ---------------------------------------------------------------------
 # Business rules: interface + implementations
 # ---------------------------------------------------------------------
