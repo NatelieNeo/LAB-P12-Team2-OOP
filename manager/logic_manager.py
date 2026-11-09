@@ -1,3 +1,13 @@
+"""Logic Manager: nutrition maths, safety/source rules, ranking and plan assembly."""
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Sequence
+
+from manager.models import (
+    MealCandidate, MealPlan, MealPlanRequest, NutritionTargets,
+    PlannedMeal, ShoppingList, UserProfile,
+)
+
+
 
 # ---------------------------------------------------------------------
 # Business rules: interface + implementations
