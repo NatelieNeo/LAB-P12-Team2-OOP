@@ -124,3 +124,78 @@ class JsonDataManager(DataManager):
             plans = self._read_json(self._plan_file)
         return {entry_id: MealPlan.from_dict(data) for entry_id, data in plans.items()
                 if data.get("user_id") == user_id}
+
+class SqliteDataManager(DataManager):
+    """ADVANCED FEATURE: stores the same records in a SQLite database.
+
+    A new connection is opened for every operation (never shared), because a
+    sqlite3 connection must not be used from several threads."""
+
+    def __init__(self, db_path: str = SQLITE_DB_FILE):
+        self._db_path = db_path
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        try:
+            os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
+            return sqlite3.connect(self._db_path, timeout=10)
+        except (sqlite3.Error, OSError) as error:
+            raise StorageError(f"Could not open database {self._db_path}: {error}") from error
+
+    def _init_schema(self) -> None:
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS users ("
+                    "id TEXT PRIMARY KEY, username TEXT NOT NULL, data TEXT NOT NULL)")
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS meal_plans ("
+                    "seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL, "
+                    "user_id TEXT NOT NULL, data TEXT NOT NULL)")
+        except sqlite3.Error as error:
+            raise StorageError(f"Could not prepare database: {error}") from error
+        finally:
+            connection.close()
+
+    def _execute(self, sql: str, params: tuple = (), fetch: bool = False):
+        connection = self._connect()
+        try:
+            with connection:
+                cursor = connection.execute(sql, params)
+                return cursor.fetchall() if fetch else cursor.rowcount
+        except sqlite3.Error as error:
+            raise StorageError(f"Database error: {error}") from error
+        finally:
+            connection.close()
+
+    def save_profile(self, profile: UserProfile) -> None:
+        self._execute("INSERT INTO users (id, username, data) VALUES (?, ?, ?)",
+                      (str(uuid.uuid4()), profile.username, json.dumps(profile.to_dict())))
+
+    def find_profiles(self, key: str, value: Any) -> Dict[str, UserProfile]:
+        rows = self._execute("SELECT id, data FROM users", fetch=True)
+        records = {entry_id: json.loads(data) for entry_id, data in rows}
+        return {entry_id: UserProfile.from_dict(data) for entry_id, data in records.items()
+                if data.get(key) == value}
+
+    def update_profile(self, username: str, changes: Dict[str, Any]) -> bool:
+        rows = self._execute("SELECT id, data FROM users WHERE username = ?", (username,), fetch=True)
+        if not rows:
+            return False
+        entry_id, data = rows[0]
+        record = json.loads(data)
+        record.update(changes)
+        self._execute("UPDATE users SET data = ? WHERE id = ?", (json.dumps(record), entry_id))
+        return True
+
+    def save_plan(self, plan: MealPlan, user_id: str) -> None:
+        record = plan.to_dict()
+        record["user_id"] = user_id
+        self._execute("INSERT INTO meal_plans (id, user_id, data) VALUES (?, ?, ?)",
+                      (str(uuid.uuid4()), user_id, json.dumps(record)))
+
+    def plans_for_user(self, user_id: str) -> Dict[str, MealPlan]:
+        rows = self._execute("SELECT id, data FROM meal_plans WHERE user_id = ? ORDER BY seq",
+                             (user_id,), fetch=True)
+        return {entry_id: MealPlan.from_dict(json.loads(data)) for entry_id, data in rows}
