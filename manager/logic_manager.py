@@ -7,6 +7,7 @@ from manager.models import (
     PlannedMeal, ShoppingList, UserProfile,
 )
 
+
 # ---------------------------------------------------------------------
 # Nutrition maths
 # ---------------------------------------------------------------------
@@ -61,6 +62,7 @@ class NutritionCalculator:
             daily_macros=self.macro_targets(daily, profile.goal),
             per_meal_macros=self.macro_targets(per_meal, profile.goal),
         )
+
     
 # ---------------------------------------------------------------------
 # Business rules: interface + implementations
