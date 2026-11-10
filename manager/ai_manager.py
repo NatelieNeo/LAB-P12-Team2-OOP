@@ -1,4 +1,4 @@
-# AI Manager: builds the prompt, calls an AI provider, retries, and hands back candidates.
+"""AI Manager: builds the prompt, calls an AI provider, retries, and hands back candidates."""
 import logging
 import os
 import time
@@ -13,17 +13,16 @@ from manager.models import MealCandidate, MealPlanRequest, NutritionTargets
 logger = logging.getLogger(__name__)
 
 
-# Interface: anything that can turn a prompt into response text.
 class AIProvider(ABC):
+    """Interface: anything that can turn a prompt into response text."""
 
     @abstractmethod
     def generate(self, prompt: str) -> str:
-        # Return the model's raw text. Raise AIConnectionError if it cannot be reached.
-        pass
+        """Return the model's raw text. Raise AIConnectionError if it cannot be reached."""
 
 
-# Talks to Google Gemini. The API key is private and read from the environment.
 class GeminiProvider(AIProvider):
+    """Talks to Google Gemini. The API key is private and read from the environment."""
 
     def __init__(self, api_key: Optional[str] = None, model: str = GEMINI_MODEL):
         self.__api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
@@ -54,9 +53,9 @@ class GeminiProvider(AIProvider):
         return response.text
 
 
-# Offline provider for tests and demos: replays canned responses in order
-# (the last one repeats). An Exception instance in the list is raised instead.
 class StubAIProvider(AIProvider):
+    """Offline provider for tests and demos: replays canned responses in order
+    (the last one repeats). An Exception instance in the list is raised instead."""
 
     def __init__(self, responses: Union[str, Exception, Sequence[Union[str, Exception]]]):
         single = isinstance(responses, (str, Exception))
@@ -75,8 +74,8 @@ class StubAIProvider(AIProvider):
         return item
 
 
-# Builds the Gemini prompt from a request and the application-calculated targets.
 class PromptBuilder:
+    """Builds the Gemini prompt from a request and the application-calculated targets."""
 
     TEMPLATE = """
 You are the meal recommendation engine for Calora, a Singapore-based personalised meal planning application.
@@ -291,11 +290,6 @@ Use exactly the following structure:
         )
 
 
-# Gets meal candidates from an AI provider, retrying on failure.
-#
-# The provider is injected (aggregation), so Gemini can be swapped for the
-# offline stub without changing this class. The prompt builder is owned by
-# this manager (composition).
 class AIManager:
 
     def __init__(self, provider: AIProvider, handler: Optional[AIHandlerManager] = None,
