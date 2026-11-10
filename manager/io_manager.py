@@ -1,7 +1,5 @@
+"""IO Manager: everything the user types or reads (terminal and web form)."""
 from typing import Any, Callable, Dict, List, Mapping, Optional
-from wsgiref.validate import validator
-
-from altair import value
 
 from manager.exceptions import InvalidInputError
 from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
@@ -32,7 +30,7 @@ class UserInputValidator:
         try:
             age = int(str(raw or "").strip())
         except ValueError:
-            raise InvalidInputError("Please enter a whole number.")
+            raise InvalidInputError("Please enter your age as a whole number.") from None
         if not 12 < age < 100:
             raise InvalidInputError("Please enter a valid age between 13 and 99.")
         return age
@@ -43,59 +41,53 @@ class UserInputValidator:
             raise InvalidInputError("Please enter M or F for gender.")
         return "male" if value == "M" else "female"
 
-    def validate_number(self, raw: Any, label: str, low: float, high: float) -> float:
+    def _validate_number(self, raw: Any, label: str, low: float, high: float) -> float:
         try:
             value = float(str(raw).strip())
         except ValueError:
             raise InvalidInputError(f"Please enter your {label} as a number.") from None
         if not low < value < high:
-            raise InvalidInputError(f"Please enter a realistic {label} between {low} and {high}.")
+            raise InvalidInputError(f"Please enter a realistic {label} (between {low:g} and {high:g}).")
         return value
 
     def validate_weight(self, raw: Any) -> float:
-        return self.validate_number(raw, "weight", 20, 300)
+        return self._validate_number(raw, "weight in kg", 20, 300)
 
     def validate_height(self, raw: Any) -> float:
-        return self.validate_number(raw, "height", 50, 250)
+        return self._validate_number(raw, "height in cm", 50, 250)
 
     def validate_activity_level(self, raw: Any) -> str:
         value = str(raw or "").strip().lower()
         if value not in self.ACTIVITY_LEVELS:
-            raise InvalidInputError(
-                f"Please enter one of the following activity levels: {', '.join(self.ACTIVITY_LEVELS)}."
-            )
+            raise InvalidInputError("Please choose: " + ", ".join(self.ACTIVITY_LEVELS) + ".")
         return value
 
     def validate_goal(self, raw: Any) -> str:
         value = str(raw or "").strip().lower()
         if value not in self.GOALS:
-            raise InvalidInputError(
-                f"Please enter one of the following goals: {', '.join(self.GOALS)}."
-            )
+            raise InvalidInputError("Please choose: " + ", ".join(self.GOALS) + ".")
         return value
 
     def validate_restrictions(self, raw: Any) -> List[str]:
-        text = str(raw or "").strip().upper()
+        text = str(raw or "").strip()
         if text.isdigit():
-            raise InvalidInputError("Please enter dietary restrictions as text, not numbers.")
+            raise InvalidInputError("You entered a number. Please describe your restrictions in words.")
         return UserProfile.normalize_restrictions(text)
 
     def validate_meal_preference(self, raw: Any) -> str:
-        text = str(raw or "").strip().upper()
+        text = str(raw or "").strip()
         if text.isdigit():
-            raise InvalidInputError("Please enter meal preference as text, not numbers.")   
+            raise InvalidInputError("You entered a number. Please describe the food you want in words.")
         return text
 
     def validate_meal_source(self, raw: Any) -> str:
-        value = str(raw or "").strip().upper()
+        value = str(raw or "").strip().lower()
         if value not in self.MEAL_SOURCES:
-            raise InvalidInputError(
-                f"Please enter one of the following meal sources: {', '.join(self.MEAL_SOURCES)}."
-            )
+            raise InvalidInputError("Please enter in, out or both.")
         return value
 
     def validate_budget(self, raw: Any) -> Optional[float]:
-        #blank/0 means no budget
+        """Blank or 0 means no budget (None)."""
         text = str(raw if raw is not None else "").strip()
         if not text:
             return None
@@ -106,7 +98,7 @@ class UserInputValidator:
         if value == 0:
             return None
         if value < self.MIN_BUDGET:
-            raise InvalidInputError(f"Please enter a budget of at least ${self.MIN_BUDGET}.")   
+            raise InvalidInputError(f"The minimum daily budget is ${self.MIN_BUDGET} (enter 0 for none).")
         return value
 
     def parse_list(self, raw: Any) -> List[str]:
@@ -114,28 +106,26 @@ class UserInputValidator:
 
 
 class IOManager:
-    #reads inputs and shows output for the terminal, turns web form data into model objects
-
+    """Reads input and shows output for the terminal, and turns web form data
+    into model objects. The input and output functions are injected so the
+    class can be tested without a keyboard."""
 
     ALLERGEN_NOTICE = ("Always check food labels and ask the stall about allergens. "
-                        "Calora cannot guarantee the absence of allergens.")
-    MENU = ("1. Create a meal plan\n"
-            "2. View your previous meal plans\n"
-            "3. View your profile\n"
-            "4. Update your profile\n"
-            "5. Exit\n")
+                       "Calora cannot guarantee a meal is allergen-free.")
+    MENU = ("1. Create a meal plan", "2. View previous meal plans", "3. View your profile",
+            "4. Update your profile", "5. Exit the program")
     SLOT_ORDER = MealPlan.SLOTS
 
     def __init__(self, validator: Optional[UserInputValidator] = None,
-        input_fn: Callable[[str], str] = input, output_fn: Callable[..., None] = print):
+                 input_fn: Callable[[str], str] = input, output_fn: Callable[..., None] = print):
         self._validator = validator or UserInputValidator()
         self._input = input_fn
         self._output = output_fn
 
-
-    #terminal input
-
-    def ask_user(self, prompt: str, validate: Callable[[str], Any], allow_blank: bool = False) -> Any:
+    # ---- terminal input ----------------------------------------------------
+    def _ask(self, prompt: str, validate: Callable[[str], Any], allow_blank: bool = False) -> Any:
+        """Keep asking until the answer is valid. A blank answer returns None
+        when allow_blank is set (used when updating a profile)."""
         while True:
             raw = self._input(prompt)
             if allow_blank and raw.strip() == "":
@@ -143,56 +133,49 @@ class IOManager:
             try:
                 return validate(raw)
             except InvalidInputError as error:
-                self._output(f"Error: {error}") 
+                self._output(error)
 
     def welcome(self) -> None:
-        self._output("Welcome to Calora! Your personal meal planning assistant.\n")
+        self._output("Hi I am your personal health assistant, Calora!")
         self._output("I can help you track your health and fitness goals.\n")
-        self._output(self.ALLERGEN_NOTICE)
 
-    def read_username(self, raw: Any) -> str: #validate username from web form
-        return self._validator.validate_username(raw)    
+    def read_username(self, raw: Any) -> str:
+        """Validate a username typed into the web sign-in form."""
+        return self._validator.validate_username(raw)
 
-    def prompt_username(self) -> str: #validate username from terminal
-        return self.ask_user("Enter your username: ", self._validator.validate_username)
+    def prompt_username(self) -> str:
+        return self._ask("Please enter your username: ", self._validator.validate_username)
 
     def prompt_profile(self, username: str) -> UserProfile:
         v = self._validator
         name = self._ask("Please enter your name: ", v.validate_name)
-        self._output(f"Hello, {name}! Nice to meet you.\n")
+        self._output(f"Hi {name}, it's nice to meet you!")
         age = self._ask("Please enter your age: ", v.validate_age)
         gender = self._ask("Please enter your gender (M/F): ", v.validate_gender)
-        weight = self._ask("Please enter your weight (kg): ", v.validate_weight)
-        height = self._ask("Please enter your height (cm): ", v.validate_height)
-        activity_level = self._ask("Please enter your activity level (sedentary, moderately active, very active): ", v.validate_activity_level)
-        goal = self._ask("Please enter your goal (lose, maintain, gain): ", v.validate_goal)
-        restrictions = self._ask("Please enter any dietary restrictions (comma-separated, or leave blank): ", v.validate_restrictions, allow_blank=True)
-        return UserProfile(
-            username=username,
-            name=name,
-            age=age,
-            gender=gender,
-            weight=weight,
-            height=height,
-            activity_level=activity_level,
-            goal=goal,
-            restrictions=restrictions,
-            
-        )
+        weight = self._ask("Please enter your weight in kg (up to 1 decimal place): ", v.validate_weight)
+        height = self._ask("Please enter your height in cm (up to 1 decimal place): ", v.validate_height)
+        activity = self._ask(
+            "Please enter your activity level (sedentary /workout 1-2 times a week/, "
+            "moderately active /workout 3-4 times a week/, very active /5-6 times a week/): ",
+            v.validate_activity_level)
+        goal = self._ask("Please enter your desired goal (lose/maintain/gain): ", v.validate_goal)
+        restrictions = self._ask(
+            "Please indicate your dietary restrictions (If none please enter 'nil'): ", v.validate_restrictions)
+        return UserProfile(username, name, age, gender, weight, height, activity, goal, restrictions)
 
-    def prompt_profile_changes(self, current: UserProfile) -> Dict[str,Any]:
-    #ask for each field agn, nil means no change
+    def prompt_profile_changes(self, current: UserProfile) -> Dict[str, Any]:
+        """Ask for each field again; a blank answer keeps the current value."""
         v = self._validator
-        self._output("\nUpdate your profile. Leave blank to keep current value.\n")    
+        self._output("\nUpdate your profile information. Leave blank to keep current value.")
         fields = (
             ("name", "Please enter your name: ", v.validate_name),
             ("age", "Please enter your age: ", v.validate_age),
             ("gender", "Please enter your gender (M/F): ", v.validate_gender),
-            ("weight", "Please enter your weight (kg): ", v.validate_weight),
-            ("height", "Please enter your height (cm): ", v.validate_height),
-            ("activity_level", "Please enter your activity level (sedentary, moderately active, very active): ", v.validate_activity_level),
-            ("goal", "Please enter your goal (lose, maintain, gain): ", v.validate_goal),
-            ("dietary_restrictions", "Please enter any dietary restrictions (comma-separated, or leave blank): ", v.validate_restrictions)
+            ("weight_kg", "Please enter your weight in kg: ", v.validate_weight),
+            ("height_cm", "Please enter your height in cm: ", v.validate_height),
+            ("activity_level", "Please enter your activity level: ", v.validate_activity_level),
+            ("goal", "Please enter your desired goal (lose/maintain/gain): ", v.validate_goal),
+            ("dietary_restrictions", "Please indicate your dietary restrictions: ", v.validate_restrictions),
         )
         changes = {}
         for field, prompt, validate in fields:
@@ -203,65 +186,55 @@ class IOManager:
 
     def prompt_request(self, profile: UserProfile) -> MealPlanRequest:
         v = self._validator
-        self._output("\nLet's create a meal plan for you.\n")
-        meal_preference = self._ask("Please enter your meal preference (e.g., vegetarian, low-carb, etc.): ", v.validate_meal_preference)
-        self._output(f"Great! You prefer {meal_preference} meals.\n")
-        meal_source = self._ask("Do you want to eat in, out, or both? Enter in/out/both ", v.validate_meal_source)
-        self._output(f"Got it! You want to eat {meal_source}.\n")
+        self._output(f"\nOkay {profile.name}, let's get started with today's meal plan!")
+        preference = self._ask("What type of food do you want to eat today?: ", v.validate_meal_preference)
+        self._output(f"Yum! {preference} sounds good.")
+        source = self._ask("Are you planning to eat out or in today? enter in/out/both: ", v.validate_meal_source)
         pantry: List[str] = []
-        if meal_source != "out": #only if eating in or both, ask for pantry items
-            pantry = v.parse_list(self._input("Please enter your pantry items (comma-separated, or leave blank): "))
-            self._output(f"Thanks! You have {len(pantry)} items in your pantry.\n")
-        budget = self._ask(f"Please enter your budget (minimum ${v.MIN_BUDGET}) (or leave blank for no budget): ",
-        v.validate_budget, allow_blank=True)
-        self._output(f"Got it! Your budget is {budget}.\n")
-        return MealPlanRequest(
-            profile=profile,
-            meal_source=meal_source,
-            budget=budget,
-            meal_preference=meal_preference,
-            pantry=pantry
-        )
-    
+        if source != "out":  # no pantry needed when only eating out
+            pantry = v.parse_list(self._input("What ingredients do you have?: "))
+        budget = self._ask(
+            f"What's your total budget for the day? (minimum ${v.MIN_BUDGET}) (enter '0' for none): ",
+            v.validate_budget)
+        return MealPlanRequest(profile, preference, source, pantry, budget)
+
     def prompt_menu_choice(self) -> str:
         for line in self.MENU:
             self._output(line)
-        return self._input("\nPlease enter your choice (1-5): ").strip()
-        
+        return self._input("\nPlease select an option from the list below (1-5): ").strip()
+
     def pause(self) -> None:
         self._input("\nPress Enter to return to the main menu...")
 
-    # terminal output
+    # ---- terminal output -----------------------------------------------------
     def show_message(self, message: Any) -> None:
         self._output(message)
 
-    def allergen_notice(self, plan: MealPlan) -> str: #disclaimer for eating out, if any meal is from outside
+    def allergen_notice(self, plan: MealPlan) -> str:
+        """The disclaimer, only when the plan has an eat-out meal (a home-cooked
+        meal has no stall to ask)."""
         if any(meal.source_type == "eat_out" for meal in plan.meals.values()):
-
             return self.ALLERGEN_NOTICE
         return ""
 
     def format_plan(self, plan: MealPlan) -> str:
         data = plan.to_dict()
-        lines = ["=== Your Meal Plan ===", f"Why this plan: {data['explanation']} "]
-
+        lines = ["=== Your Meal Plan ===", f"Why this plan: {data['explanation']}"]
         for slot in self.SLOT_ORDER:
             meal = data["meals"].get(slot)
             if meal is None:
                 continue
             lines.extend([
-                 "",
-                    f"{slot.capitalize()}: {meal.name} ({meal.source_type})",
-                    f"Calories: {meal['calorie_range']} {meal['calorie_tag']} for your target",                       
-                    f"Macros: Protein {meal['protein_tag']} / Carbs {meal['carbs_tag']} / Fat {meal['fat_tag']}" 
-                            
+                "",
+                f"{slot.capitalize()}: {meal['name']} ({meal['source_type']})",
+                f"Calories: {meal['calorie_range']} — {meal['calorie_tag']} for your target",
+                f"Macros: Protein {meal['protein_tag']} / Carbs {meal['carbs_tag']} / Fat {meal['fat_tag']}",
             ])
-
             if meal["pantry_ingredients_used"]:
-                lines.append("Ingredients: " + ", ".join(plan.meals[slot].ingredients_labels))
+                lines.append("Ingredients: " + ", ".join(plan.meals[slot].ingredient_labels))
             lines.append(f"Cost: {meal['cost_tier']}")
         if data["missing_slots"]:
-            lines.extend(["","Missing meals: " + ", ".join(data["missing_slots"])])
+            lines.extend(["", "Missing meals: " + ", ".join(data["missing_slots"])])
         notice = self.allergen_notice(plan)
         if notice:
             lines.extend(["", notice])
@@ -270,10 +243,14 @@ class IOManager:
     def format_profile(self, profile: UserProfile) -> str:
         data = profile.to_dict(include_preferences=False)
         data["dietary_restrictions"] = ", ".join(data["dietary_restrictions"]) or "none"
-        return "\n".join(f"{key.replace('_',' ').capitalize()}: {value}" for key, value in data.items())
+        return "\n".join(f"{key.replace('_', ' ').capitalize()}: {value}" for key, value in data.items())
 
     def show_plan(self, plan: MealPlan) -> None:
         self._output(self.format_plan(plan))
+
+    def show_history(self, plans: Mapping[str, MealPlan]) -> None:
+        for entry_id, plan in plans.items():
+            self._output(f"\nMeal Plan ID: {entry_id}\n{self.format_plan(plan)}")
 
     def show_profile(self, profile: UserProfile) -> None:
         self._output(f"\nHere is your profile information:\n{self.format_profile(profile)}")
@@ -281,10 +258,9 @@ class IOManager:
     def show_shopping_list(self, shopping_list: ShoppingList) -> None:
         self._output("\n" + shopping_list.to_text())
 
-
-    #web forms
+    # ---- web forms -------------------------------------------------------------
     def read_profile_form(self, form: Mapping[str, str], username: Optional[str] = None) -> UserProfile:
-        #Validate the profile part of a web form. Raises InvalidInputError
+        """Validate the profile part of a web form. Raises InvalidInputError."""
         v = self._validator
         return UserProfile(
             username=v.validate_username(username if username is not None else form.get("username")),
@@ -296,10 +272,10 @@ class IOManager:
             activity_level=v.validate_activity_level(form.get("activity_level")),
             goal=v.validate_goal(form.get("goal")),
             dietary_restrictions=v.validate_restrictions(form.get("dietary_restrictions")),
-        )         
+        )
 
     def read_request_form(self, form: Mapping[str, str], profile: UserProfile) -> MealPlanRequest:
-        #validate the preferences on web
+        """Validate the preferences part of a web form. Raises InvalidInputError."""
         v = self._validator
         source = v.validate_meal_source(form.get("meal_source") or "both")
         pantry = [] if source == "out" else v.parse_list(form.get("ingredients"))
