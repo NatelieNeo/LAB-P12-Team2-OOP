@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="brand"><span class="mark">Calora / daily table</span></header>
+<h1>Building your meal plan</h1>
+<p class="lede">This usually takes a few seconds. You can leave this page open; it will update by itself.</p>
+<div id="plan-job" data-status-url="{{ status_url }}" data-result-url="{{ result_url }}"></div>
+<p id="plan-job-message" class="notice" hidden></p>
+{% endblock %}
