@@ -29,6 +29,7 @@ class AIHandlerManager:
         return (isinstance(targets, dict)
                 and set(targets.keys()) == self.TARGET_FIELDS
                 and all(self._is_number(value) for value in targets.values()))
+    
     def _validate_recommendation(self, recommendation: Any) -> bool:
         if not isinstance(recommendation, dict):
             return False
@@ -41,6 +42,7 @@ class AIHandlerManager:
             and all(self._is_number(recommendation[f]) for f in self.NUMERIC_FIELDS)
             and all(isinstance(recommendation[f], list) for f in self.LIST_FIELDS)
         )
+    
     def _validate_recommendations(self, recommendations: Any) -> bool:
         return (isinstance(recommendations, list)
                 and len(recommendations) == self._expected_count
@@ -51,6 +53,7 @@ class AIHandlerManager:
                 and set(data.keys()) == self.TOP_LEVEL_FIELDS
                 and self._validate_targets(data["estimated_nutrition_targets"])
                 and self._validate_recommendations(data["recommendations"]))
+    
     def parse_response(self, response_text: str) -> List[MealCandidate]:
         """Text -> validated MealCandidate objects.
 
