@@ -63,6 +63,7 @@ class CliApp:
         shopping_list = self._controller.get_shopping_list(plan, request)
         if request.meal_source != "out":
             self._io.show_shopping_list(shopping_list)
+        self._io.show_recipes(self._controller.get_recipes(plan))
         self._io.pause()
         return self._controller.get_profile(profile.username) or profile
 
