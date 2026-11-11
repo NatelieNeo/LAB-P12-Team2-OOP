@@ -219,6 +219,18 @@ class WebApp:
         return render_template("profile.html", profile=self._profile_page_values(updated),
                                message="Profile updated successfully.")
 
+    def plans(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        history = [self._plan_view(plan) for plan in self._controller.get_history(profile.username).values()]
+        return render_template("history.html", username=profile.username, meal_plans=history)
+
+    def logout(self):
+        session.clear()
+        return redirect(url_for("index"))
+
     
 app = WebApp.create()
 
