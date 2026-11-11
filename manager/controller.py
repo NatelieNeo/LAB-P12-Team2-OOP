@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 import config
 from manager.ai_manager import AIManager, AIProvider, GeminiProvider
-from manager.data_manager import DataManager, SqliteDataManager
+from manager.data_manager import DataManager, JsonDataManager, SqliteDataManager
 from manager.exceptions import NoSuitableMealsError
 from manager.job_manager import PlanJob, PlanJobManager
 from manager.logic_manager import LogicManager
@@ -73,8 +73,11 @@ class AppFactory:
     """Builds the real, wired-up object graph."""
 
     @staticmethod
-    def build_data_manager() -> DataManager:
-        return SqliteDataManager(config.SQLITE_DB_FILE)
+    def build_data_manager(backend: Optional[str] = None) -> DataManager:
+        backend_name = (backend or config.get_storage_backend()).lower()
+        if backend_name == "sqlite":
+            return SqliteDataManager(config.SQLITE_DB_FILE)
+        return JsonDataManager(config.USER_FILE, config.MEAL_PLAN_FILE)
 
     @staticmethod
     def build_controller(provider: Optional[AIProvider] = None, data: Optional[DataManager] = None,
