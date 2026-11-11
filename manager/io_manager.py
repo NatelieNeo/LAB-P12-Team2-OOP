@@ -2,7 +2,7 @@
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from manager.exceptions import InvalidInputError
-from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
+from manager.models import MealPlan, MealPlanRequest, Recipe, ShoppingList, UserProfile
 
 
 class UserInputValidator:
@@ -254,6 +254,18 @@ class IOManager:
 
     def show_profile(self, profile: UserProfile) -> None:
         self._output(f"\nHere is your profile information:\n{self.format_profile(profile)}")
+
+    def format_recipes(self, recipes: List[Recipe]) -> str:
+        """Step-by-step instructions for the home-cooked meals; empty text if there are none."""
+        if not recipes:
+            return ""
+        blocks = [recipe.to_text() for recipe in recipes]
+        return "=== Step-by-step recipes ===\n\n" + "\n\n".join(blocks)
+
+    def show_recipes(self, recipes: List[Recipe]) -> None:
+        text = self.format_recipes(recipes)
+        if text:
+            self._output("\n" + text)
 
     def show_shopping_list(self, shopping_list: ShoppingList) -> None:
         self._output("\n" + shopping_list.to_text())
