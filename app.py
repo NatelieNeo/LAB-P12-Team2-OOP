@@ -104,7 +104,122 @@ class WebApp:
             return "Your data could not be saved. Please try again."
         return "Unable to generate a meal plan right now."
 
+    # ---- pages ----------------------------------------------------------------
+    def index(self):
+        if not session.get("username"):
+            return render_template("welcome.html")
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return render_template("welcome.html", message="Your profile could not be found. Please sign in again.")
+        return self._render_form(self._form_values(profile), include_profile=False)
 
+    def login(self):
+        try:
+            username = self._io.read_username(request.form.get("username"))
+        except InvalidInputError as error:
+            return render_template("welcome.html", message=str(error)), 400
+        session["username"] = username
+        if self._controller.get_profile(username) is None:
+            return self._render_form(
+                {"username": username}, "No profile exists yet. Complete your details to create one.",
+                action="/profile/create", submit_label="Create profile", include_preferences=False)
+        return redirect(url_for("profile"))
+
+    def plan(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        try:
+            plan_request = self._io.read_request_form(request.form, profile)
+        except InvalidInputError as error:
+            return self._render_form(self._form_values(profile), str(error), include_profile=False, status=400)
+        job_id = self._controller.submit_plan_job(plan_request)
+        return render_template(
+            "plan_wait.html",
+            status_url=url_for("plan_status", job_id=job_id),
+            result_url=url_for("plan_result", job_id=job_id))
+
+    def _owned_job(self, job_id: str):
+        job = self._controller.get_plan_job(job_id)
+        if job is None or job.owner != session.get("username"):
+            return None
+        return job
+
+    def plan_status(self, job_id: str):
+        job = self._owned_job(job_id)
+        if job is None:
+            return jsonify({"status": "NOT_FOUND"}), 404
+        payload = {"status": job.status.value}
+        if job.status is JobStatus.FAILED:
+            payload["message"] = self._error_message(job.error)
+        return jsonify(payload)
+
+    def plan_result(self, job_id: str):
+        job = self._owned_job(job_id)
+        if job is None:
+            return redirect(url_for("index"))
+        if job.status is JobStatus.FAILED:
+            return render_template("error.html", message=self._error_message(job.error)), 503
+        if job.status is not JobStatus.DONE:
+            return render_template(
+                "plan_wait.html", status_url=url_for("plan_status", job_id=job_id),
+                result_url=url_for("plan_result", job_id=job_id))
+        shopping_list = self._controller.get_shopping_list(job.result, job.context)
+        return render_template("plan.html", result=self._plan_view(job.result, shopping_list), show_actions=True)
+
+    def create_profile(self):
+        try:
+            profile = self._io.read_profile_form(request.form)
+        except InvalidInputError as error:
+            return self._render_form(
+                request.form.to_dict(), str(error), action="/profile/create", submit_label="Create profile",
+                include_preferences=False, status=400)
+        if self._controller.get_profile(profile.username) is not None:
+            return render_template("welcome.html", message="That username already exists. Please sign in.")
+        self._controller.register_profile(profile)
+        session["username"] = profile.username
+        return redirect(url_for("profile"))
+
+    def profile(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        return render_template("profile.html", profile=self._profile_page_values(profile))
+
+    @staticmethod
+    def _profile_page_values(profile: UserProfile) -> Dict[str, Any]:
+        data = profile.to_dict(include_preferences=False)
+        data["dietary_restrictions"] = ", ".join(profile.dietary_restrictions) or "none"
+        return data
+
+    def edit_profile(self):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        return self._render_form(
+            self._form_values(profile), action="/profile/update",
+            submit_label="Save profile changes", include_preferences=False)
+
+    def update_profile(self):
+        current = self._current_profile()
+        if current is None:
+            session.clear()
+            return redirect(url_for("index"))
+        try:
+            updated = self._io.read_profile_form(request.form, current.username)
+        except InvalidInputError as error:
+            return self._render_form(
+                self._form_values(current), str(error), action="/profile/update",
+                submit_label="Save profile changes", include_preferences=False, status=400)
+        self._controller.update_profile(current.username, updated)
+        return render_template("profile.html", profile=self._profile_page_values(updated),
+                               message="Profile updated successfully.")
+
+    
 app = WebApp.create()
 
 if __name__ == "__main__":
