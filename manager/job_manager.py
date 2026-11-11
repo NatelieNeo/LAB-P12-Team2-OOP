@@ -2,17 +2,23 @@
 
 Generating a plan waits several seconds on the AI. The web UI hands the work to
 a thread pool and polls for the result; the CLI shows a spinner thread."""
-
-from enum import Enum
+import itertools
 import logging
+import sys
 import threading
-from typing import Any, Optional
+import time
+import uuid
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
+from typing import Any, Callable, Optional
 
+from config import MAX_TRACKED_JOBS, PLAN_WORKER_THREADS
 from manager.exceptions import CaloraError
 from manager.models import MealPlan
 
-
 logger = logging.getLogger(__name__)
+
 
 class JobStatus(Enum):
     PENDING = "PENDING"
