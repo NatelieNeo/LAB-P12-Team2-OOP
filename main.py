@@ -35,7 +35,8 @@ class CliApp:
             io.show_message("Profile setup complete!")
 
         handlers = {"1": self._create_plan, "2": self._view_history,
-                    "3": self._view_profile, "4": self._update_profile}
+                    "3": self._view_profile, "4": self._update_profile,
+                    "R": self._view_recipes}
         while True:
             choice = io.prompt_menu_choice()
             if choice == "5":
@@ -43,7 +44,7 @@ class CliApp:
                 return
             handler = handlers.get(choice)
             if handler is None:
-                io.show_message("Please choose a number from 1 to 5.")
+                io.show_message("Please choose a number from 1 to 5. Enter R to view recipes.")
                 continue
             profile = handler(profile)
 
@@ -73,6 +74,20 @@ class CliApp:
             self._io.show_message("No meal plans found for this user.")
         else:
             self._io.show_history(plans)
+        self._io.pause()
+        return profile
+
+    def _view_recipes(self, profile: UserProfile) -> UserProfile:
+        plans = self._controller.get_history(profile.username)
+        found_recipes = False
+        for plan_id, plan in plans.items():
+            recipes = self._controller.get_recipes(plan)
+            if recipes:
+                self._io.show_message(f"\nMeal Plan ID: {plan_id}")
+                self._io.show_recipes(recipes)
+                found_recipes = True
+        if not found_recipes:
+            self._io.show_message("No recipes found in your saved meal plans.")
         self._io.pause()
         return profile
 
