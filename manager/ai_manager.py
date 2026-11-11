@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 class AIProvider(ABC):
     """Interface: anything that can turn a prompt into response text."""
 
+    @property
+    def name(self) -> str:
+        """A label for logs and error messages."""
+        return type(self).__name__
+
     @abstractmethod
     def generate(self, prompt: str) -> str:
         """Return the model's raw text. Raise AIConnectionError if it cannot be reached."""
@@ -28,6 +33,10 @@ class GeminiProvider(AIProvider):
         self.__api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
         self._model = model
         self._client = None
+
+    @property
+    def name(self) -> str:
+        return f"gemini:{self._model}"
 
     def _get_client(self):
         if not self.__api_key:
