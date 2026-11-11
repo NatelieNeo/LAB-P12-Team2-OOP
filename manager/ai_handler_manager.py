@@ -1,4 +1,4 @@
-
+"""AI Handler Manager: turns Gemini's raw text into validated MealCandidate objects."""
 import json
 import logging
 from typing import Any, List
@@ -9,7 +9,11 @@ from manager.models import MealCandidate
 
 logger = logging.getLogger(__name__)
 
+
 class AIHandlerManager:
+    """Parses and validates the AI response. The schema is defined once, here,
+    and every check below reads from it."""
+
     TARGET_FIELDS = {"calorie_target", "protein_target_g", "carb_target_g", "fat_target_g"}
     STRING_FIELDS = ["meal_type", "meal_name", "portion_size"]
     NUMERIC_FIELDS = ["calories", "protein_g", "carbs_g", "fat_g", "estimated_cost"]
@@ -49,6 +53,7 @@ class AIHandlerManager:
                 and all(self._validate_recommendation(r) for r in recommendations))
 
     def validate_response(self, data: Any) -> bool:
+        """True only if the whole response matches the expected schema."""
         return (isinstance(data, dict)
                 and set(data.keys()) == self.TOP_LEVEL_FIELDS
                 and self._validate_targets(data["estimated_nutrition_targets"])
