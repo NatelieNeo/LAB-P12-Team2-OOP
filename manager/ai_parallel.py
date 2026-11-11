@@ -25,8 +25,8 @@ class ParallelAIProvider(AIProvider):
     cancelled; its result is simply ignored."""
 
     def __init__(self, providers: Sequence[AIProvider],
-                 validator: Optional[Callable[[str], bool]] = None,
-                 timeout: float = 60.0):
+                validator: Optional[Callable[[str], bool]] = None,
+                timeout: float = 60.0):
         if not providers:
             raise ValueError("ParallelAIProvider needs at least one provider.")
         self._providers: List[AIProvider] = list(providers)
