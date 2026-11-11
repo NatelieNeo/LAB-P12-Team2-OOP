@@ -1,6 +1,7 @@
 """AI Manager: builds the prompt, calls an AI provider, retries, and hands back candidates."""
 import logging
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from typing import List, Optional, Sequence, Union
@@ -33,6 +34,9 @@ class GeminiProvider(AIProvider):
         self.__api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
         self._model = model
         self._client = None
+        # Several threads (parallel runs, background plan jobs) may share one provider,
+        # so the lazy client creation is guarded by a lock.
+        self._client_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -41,13 +45,15 @@ class GeminiProvider(AIProvider):
     def _get_client(self):
         if not self.__api_key:
             raise AIConnectionError("GEMINI_API_KEY was not found. Add it to your .env file.", retryable=False)
-        if self._client is None:
-            try:
-                from google import genai
-                self._client = genai.Client(api_key=self.__api_key)
-            except Exception as error:
-                raise AIConnectionError(f"Failed to initialise the Gemini client: {error}", retryable=False) from error
-        return self._client
+        with self._client_lock:
+            if self._client is None:
+                try:
+                    from google import genai
+                    self._client = genai.Client(api_key=self.__api_key)
+                except Exception as error:
+                    raise AIConnectionError(
+                        f"Failed to initialise the Gemini client: {error}", retryable=False) from error
+            return self._client
 
     def generate(self, prompt: str) -> str:
         client = self._get_client()
