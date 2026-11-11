@@ -82,6 +82,7 @@ class WebApp:
         view["disclaimer"] = self._io.allergen_notice(plan)
         view["shopping_items"] = shopping_list.items if shopping_list else []
         view["shopping_covered"] = shopping_list.covered_by_pantry if shopping_list else []
+        view["recipes"] = [recipe.to_dict() for recipe in self._controller.get_recipes(plan)]
         return view
 
     def _render_form(self, profile=None, message="", action="/plan", submit_label="Build today's meal plan →",
