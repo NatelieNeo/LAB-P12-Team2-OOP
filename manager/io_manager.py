@@ -113,7 +113,8 @@ class IOManager:
     ALLERGEN_NOTICE = ("Always check food labels and ask the stall about allergens. "
                        "Calora cannot guarantee a meal is allergen-free.")
     MENU = ("1. Create a meal plan", "2. View previous meal plans", "3. View your profile",
-            "4. Update your profile", "5. Exit the program")
+            "4. Update your profile", "5. Exit the program",
+            "R. View recipes from saved plans")
     SLOT_ORDER = MealPlan.SLOTS
 
     def __init__(self, validator: Optional[UserInputValidator] = None,
@@ -201,7 +202,7 @@ class IOManager:
     def prompt_menu_choice(self) -> str:
         for line in self.MENU:
             self._output(line)
-        return self._input("\nPlease select an option from the list below (1-5): ").strip()
+        return self._input("\nPlease select an option from the list below (1-5 or R): ").strip().upper()
 
     def pause(self) -> None:
         self._input("\nPress Enter to return to the main menu...")
