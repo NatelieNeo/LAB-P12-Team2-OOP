@@ -7,3 +7,7 @@ RETRY_DELAY_SECONDS = 1.0
 RECOMMENDATION_COUNT = 10
 
 SQLITE_DB_FILE = os.path.join("data", "calora.db")
+
+# Background plan generation (threading)
+PLAN_WORKER_THREADS = 4
+MAX_TRACKED_JOBS = 200
