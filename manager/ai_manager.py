@@ -207,7 +207,7 @@ For meals where meal_source_type is "home_cooked":
 - Additional ingredients may be included when necessary.
 - Provide every ingredient required to make one serving.
 - Give the exact quantity and unit for each ingredient.
-- Provide simple cooking instructions in the correct order.
+- Put the cooking instructions in recipe_steps: a list of short strings, one action per step, in the correct order, with quantities and times where they matter. Do not number the steps.
 - Estimate calories, protein, carbohydrates and fat for one serving.
 - Estimate the cost of one serving in SGD.
 - Keep recipes realistic and reasonably easy to prepare.
