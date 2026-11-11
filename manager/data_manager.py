@@ -159,6 +159,20 @@ class SqliteDataManager(DataManager):
                         ingredient TEXT NOT NULL,
                         PRIMARY KEY (meal_id, ingredient)
                     );
+
+                    -- Recipe feature: portion size and ordered cooking steps of a home-cooked meal.
+                    -- New tables (not new columns), so an existing calora.db upgrades in place.
+                    CREATE TABLE IF NOT EXISTS meal_recipes (
+                        meal_id      INTEGER PRIMARY KEY REFERENCES meals(meal_id) ON DELETE CASCADE,
+                        portion_size TEXT NOT NULL DEFAULT ''
+                    );
+
+                    CREATE TABLE IF NOT EXISTS meal_recipe_steps (
+                        meal_id     INTEGER NOT NULL REFERENCES meals(meal_id) ON DELETE CASCADE,
+                        step_no     INTEGER NOT NULL CHECK (step_no > 0),
+                        instruction TEXT NOT NULL,
+                        PRIMARY KEY (meal_id, step_no)
+                    );
                     """
                 )
         except sqlite3.Error as error:
@@ -339,6 +353,16 @@ class SqliteDataManager(DataManager):
                             "INSERT INTO meal_ingredients (meal_id, ingredient) VALUES (?, ?)",
                             (meal_id, ingredient),
                         )
+                    if meal.portion_size or meal.recipe_steps:
+                        connection.execute(
+                            "INSERT INTO meal_recipes (meal_id, portion_size) VALUES (?, ?)",
+                            (meal_id, meal.portion_size),
+                        )
+                    for step_no, instruction in enumerate(meal.recipe_steps, start=1):
+                        connection.execute(
+                            "INSERT INTO meal_recipe_steps (meal_id, step_no, instruction) VALUES (?, ?, ?)",
+                            (meal_id, step_no, instruction),
+                        )
         except sqlite3.Error as error:
             raise StorageError(f"Could not save plan: {error}") from error
         finally:
@@ -378,6 +402,18 @@ class SqliteDataManager(DataManager):
                         fetch=True,
                     )
                 ]
+                portion_rows = self._execute(
+                    "SELECT portion_size FROM meal_recipes WHERE meal_id = ?",
+                    (meal_row["meal_id"],),
+                    fetch=True,
+                )
+                recipe_steps = [
+                    item[0] for item in self._execute(
+                        "SELECT instruction FROM meal_recipe_steps WHERE meal_id = ? ORDER BY step_no",
+                        (meal_row["meal_id"],),
+                        fetch=True,
+                    )
+                ]
                 plan._meals[meal_row["slot"]] = PlannedMeal(
                     slot=meal_row["slot"],
                     name=meal_row["name"],
@@ -391,6 +427,8 @@ class SqliteDataManager(DataManager):
                     ingredients=ingredients,
                     calories=None,
                     cost=None,
+                    recipe_steps=recipe_steps,
+                    portion_size=portion_rows[0][0] if portion_rows else "",
                 )
             plans[plan_id] = plan
         return plans
