@@ -1,7 +1,7 @@
 """CaloraController coordinates the AI, Logic and Data managers for both user
 interfaces, and AppFactory assembles the real objects (the composition root)."""
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import config
 from manager.ai_manager import AIManager, AIProvider, GeminiProvider
@@ -9,7 +9,7 @@ from manager.data_manager import DataManager, SqliteDataManager
 from manager.exceptions import NoSuitableMealsError
 from manager.job_manager import PlanJob, PlanJobManager
 from manager.logic_manager import LogicManager
-from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
+from manager.models import MealPlan, MealPlanRequest, Recipe, ShoppingList, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,10 @@ class CaloraController:
 
     def get_shopping_list(self, plan: MealPlan, request: MealPlanRequest) -> ShoppingList:
         return self._logic.build_shopping_list(plan, request.pantry_ingredients)
+
+    def get_recipes(self, plan: MealPlan) -> List[Recipe]:
+        """Step-by-step recipes for the plan's home-cooked meals."""
+        return self._logic.build_recipes(plan)
 
     def get_history(self, username: str) -> Dict[str, MealPlan]:
         return self._data.plans_for_user(username)
