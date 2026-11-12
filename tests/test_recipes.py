@@ -189,3 +189,71 @@ def test_an_existing_sqlite_database_is_upgraded_in_place(tmp_path):
     newest = list(upgraded.plans_for_user("nisha").values())[-1]
     assert newest.meals["breakfast"].recipe_steps == ["Boil the eggs.", "Toast the bread."]
 
+
+# ---- terminal output ---------------------------------------------------------------------
+def test_io_formats_recipes_and_prints_nothing_when_there_are_none():
+    shown = []
+    io = IOManager(output_fn=lambda *a: shown.append(" ".join(map(str, a))))
+    recipes = [Recipe("breakfast", "Eggs on Toast", "1 serving", ["2 eggs"], ["Boil.", "Serve."])]
+    text = io.format_recipes(recipes)
+    assert text.startswith("=== Step-by-step recipes ===") and "1. Boil." in text and "2. Serve." in text
+    assert io.format_recipes([]) == ""
+    io.show_recipes([])
+    assert shown == []
+    io.show_recipes(recipes)
+    assert "Eggs on Toast" in shown[0]
+
+
+def test_cli_shows_recipes_after_a_home_cooked_plan(controller_factory, response_text):
+    controller, _ = controller_factory(response_text)
+    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "in", "eggs, rice", "0", "", "5"])
+    assert "=== Step-by-step recipes ===" in out
+    assert "1. " in out and "Steps:" in out
+
+
+def test_cli_shows_no_recipes_when_eating_out(controller_factory, response_text):
+    controller, _ = controller_factory(response_text)
+    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "out", "", "0", "", "5"])
+    assert "=== Your Meal Plan ===" in out
+    assert "Step-by-step recipes" not in out
+
+
+# ---- web page -----------------------------------------------------------------------------
+@pytest.fixture
+def web_with_recipes(controller_factory):
+    from app import WebApp
+    data = sample_response()
+    for item in data["recommendations"]:
+        if item["meal_source_type"] == "home_cooked":
+            item["recipe_steps"] = ["Chop the <script>alert(1)</script> onions.", "Serve & enjoy."]
+    controller, _ = controller_factory(json.dumps(data))
+    return WebApp(controller).flask_app.test_client()
+
+
+def test_web_plan_page_lists_recipes_and_escapes_the_ai_text(web_with_recipes):
+    client = web_with_recipes
+    sign_up(client)
+    job_id = start_plan(client)
+    assert wait_for_plan(client, job_id) == "DONE"
+    page = client.get(f"/plan/result/{job_id}").get_data(as_text=True)
+    assert "<h2>Recipes</h2>" in page and "recipe-steps" in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script>alert(1)" not in page
+    assert "Serve &amp; enjoy." in page
+
+
+def test_web_history_keeps_the_recipes(web_with_recipes):
+    client = web_with_recipes
+    sign_up(client)
+    job_id = start_plan(client)
+    wait_for_plan(client, job_id)
+    history = client.get("/plans").get_data(as_text=True)
+    assert "recipe-steps" in history and "Serve &amp; enjoy." in history
+
+
+def test_web_plan_without_home_cooked_meals_has_no_recipe_section(web_with_recipes):
+    client = web_with_recipes
+    sign_up(client)
+    job_id = start_plan(client, {**PLAN_FORM, "meal_source": "out", "ingredients": ""})
+    wait_for_plan(client, job_id)
+    page = client.get(f"/plan/result/{job_id}").get_data(as_text=True)
+    assert "<h2>Recipes</h2>" not in page
