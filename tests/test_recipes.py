@@ -124,4 +124,68 @@ def test_logic_manager_builds_recipes_from_a_real_plan(candidates, request_both)
     assert {r.name for r in recipes} == {m.name for m in plan.meals.values() if m.source_type == "home_cooked"}
 
 
+# ---- controller ------------------------------------------------------------------------
+def test_controller_returns_recipes_for_a_new_plan(controller_factory, response_text):
+    controller, _ = controller_factory(response_text)
+    profile = make_profile()
+    controller.register_profile(profile)
+    plan = controller.create_meal_plan(make_request(profile, meal_source="home_cooked"))
+    recipes = controller.get_recipes(plan)
+    assert len(recipes) == len(plan.meals) and all(r.steps for r in recipes)
+
+
+# ---- storage (both backends must keep the steps) ------------------------------------------
+def test_saved_plans_keep_their_recipes(data_manager):
+    data_manager.save_profile(make_profile())
+    data_manager.save_plan(plan_with(planned("breakfast"), planned("dinner", name="Chicken Bowl")), "nisha")
+    loaded = next(iter(data_manager.plans_for_user("nisha").values()))
+    recipes = RecipeBuilder().build(loaded)
+    assert [r.name for r in recipes] == ["Eggs on Toast", "Chicken Bowl"]
+    assert recipes[0].steps == ["Boil the eggs.", "Toast the bread."]
+    assert recipes[0].portion_size == "1 serving"
+
+
+def test_step_order_is_kept_for_ten_steps(data_manager):
+    steps = [f"Step number {n}." for n in range(1, 11)]
+    data_manager.save_profile(make_profile())
+    data_manager.save_plan(plan_with(planned(steps=steps)), "nisha")
+    loaded = next(iter(data_manager.plans_for_user("nisha").values()))
+    assert loaded.meals["breakfast"].recipe_steps == steps
+
+
+def test_eat_out_meals_store_no_recipe(data_manager):
+    data_manager.save_profile(make_profile())
+    data_manager.save_plan(plan_with(planned("lunch", source="eat_out", steps=(), ingredients=[],
+                                             portion_size="")), "nisha")
+    loaded = next(iter(data_manager.plans_for_user("nisha").values()))
+    assert loaded.meals["lunch"].recipe_steps == []
+
+
+def test_json_plans_from_before_the_feature_load_without_recipes(tmp_path):
+    old_plan = plan_with(planned()).to_dict()
+    for meal_data in old_plan["meals"].values():
+        meal_data.pop("recipe_steps"), meal_data.pop("portion_size")
+    users, plans = tmp_path / "u.json", tmp_path / "p.json"
+    users.write_text(json.dumps({}))
+    plans.write_text(json.dumps({"abc": {"user_id": "nisha", **old_plan}}))
+    manager = JsonDataManager(str(users), str(plans))
+    loaded = manager.plans_for_user("nisha")
+    assert loaded and next(iter(loaded.values())).meals["breakfast"].recipe_steps == []
+
+
+def test_an_existing_sqlite_database_is_upgraded_in_place(tmp_path):
+    path = str(tmp_path / "calora.db")
+    manager = SqliteDataManager(path)
+    manager.save_profile(make_profile())
+    manager.save_plan(plan_with(planned()), "nisha")
+    import sqlite3
+    connection = sqlite3.connect(path)
+    connection.executescript("DROP TABLE meal_recipe_steps; DROP TABLE meal_recipes;")  # a database from before
+    connection.close()
+    upgraded = SqliteDataManager(path)  # recreates the new tables without touching old data
+    old = next(iter(upgraded.plans_for_user("nisha").values()))
+    assert old.meals["breakfast"].name == "Eggs on Toast" and old.meals["breakfast"].recipe_steps == []
+    upgraded.save_plan(plan_with(planned()), "nisha")
+    newest = list(upgraded.plans_for_user("nisha").values())[-1]
+    assert newest.meals["breakfast"].recipe_steps == ["Boil the eggs.", "Toast the bread."]
 
