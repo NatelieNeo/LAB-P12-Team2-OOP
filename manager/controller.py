@@ -1,7 +1,7 @@
 """CaloraController coordinates the AI, Logic and Data managers for both user
 interfaces, and AppFactory assembles the real objects (the composition root)."""
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import config
 from manager.ai_handler_manager import AIHandlerManager
@@ -12,7 +12,6 @@ from manager.exceptions import NoSuitableMealsError
 from manager.job_manager import PlanJob, PlanJobManager
 from manager.logic_manager import LogicManager
 from manager.models import MealPlan, MealPlanRequest, Recipe, ShoppingList, UserProfile
-
 
 logger = logging.getLogger(__name__)
 
@@ -105,4 +104,3 @@ class AppFactory:
             data=data or AppFactory.build_data_manager(),
             jobs=jobs or PlanJobManager(),
         )
-
