@@ -27,3 +27,18 @@ class StorageError(CaloraError):
 
 class NoSuitableMealsError(CaloraError):
     """No meal survived the filters, so a plan cannot be built."""
+
+
+class AllProvidersFailedError(AIConnectionError):
+    """Every AI provider in a parallel run failed, timed out or returned an
+    invalid response. ``failures`` maps each provider's name to its error.
+
+    It is retryable if at least one failure was retryable, so the AIManager
+    only gives up immediately when no provider could ever succeed (for
+    example, no API key is configured)."""
+
+    def __init__(self, message, failures=None):
+        failures = dict(failures or {})
+        retryable = any(getattr(error, "retryable", True) for error in failures.values()) if failures else True
+        super().__init__(message, retryable=retryable)
+        self.failures = failures
