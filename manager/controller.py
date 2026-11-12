@@ -81,3 +81,13 @@ class AppFactory:
             data=data or AppFactory.build_data_manager(),
             jobs=jobs or PlanJobManager(),
         )
+    @staticmethod
+    def build_controller(provider: Optional[AIProvider] = None, data: Optional[DataManager] = None,
+                         jobs: Optional[PlanJobManager] = None) -> CaloraController:
+        return CaloraController(
+            ai=AIManager(provider or AppFactory.build_ai_provider()),
+            logic=LogicManager(),
+            data=data or AppFactory.build_data_manager(),
+            jobs=jobs or PlanJobManager(),
+        )
+
