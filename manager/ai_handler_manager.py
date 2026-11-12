@@ -51,6 +51,14 @@ class AIHandlerManager:
                 and set(data.keys()) == self.TOP_LEVEL_FIELDS
                 and self._validate_targets(data["estimated_nutrition_targets"])
                 and self._validate_recommendations(data["recommendations"]))
+
+    def is_valid(self, response_text: str) -> bool:
+        try:
+            self.parse_response(response_text)
+        except AIResponseError:
+            return False
+        return True
+    
     def parse_response(self, response_text: str) -> List[MealCandidate]:
         """Text -> validated MealCandidate objects.
 
