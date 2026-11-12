@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Optional
 
 import config
+from manager.ai_handler_manager import AIHandlerManager
 from manager.ai_manager import AIManager, AIProvider, GeminiProvider
 from manager.data_manager import DataManager, SqliteDataManager
 from manager.ai_manager import AIManager, AIProvider, GeminiProvider
