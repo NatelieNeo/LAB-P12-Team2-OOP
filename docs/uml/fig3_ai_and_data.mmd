@@ -1,0 +1,68 @@
+classDiagram
+direction TB
+class AIManager {
+  #_provider : AIProvider
+  -_prompt_builder : PromptBuilder
+  #_handler : AIHandlerManager
+  +get_recommendations(request, targets) list
+}
+class PromptBuilder {
+  +build(request, targets) str
+}
+class AIProvider {
+  <<interface>>
+  +generate(prompt) str #123;abstract#125;
+}
+class GeminiProvider {
+  -__api_key : str
+  -_model : str
+  +generate(prompt) str
+}
+class ParallelAIProvider {
+  -_providers : list~AIProvider~
+  -_validator : callable
+  -_timeout : float
+  +generate(prompt) str
+  +last_winner : str
+}
+class StubAIProvider {
+  -_responses : list
+  +generate(prompt) str
+}
+class AIHandlerManager {
+  +parse_response(text) list
+  +validate_response(data) bool
+  +is_valid(text) bool
+  -_validate_recommendation(rec) bool
+}
+class MealCandidate {
+  -_meal_name : str
+  -_calories : float
+  -_ingredients : list
+}
+class DataManager {
+  <<abstract>>
+  +save_profile(profile) None #123;abstract#125;
+  +find_profiles(key, value) dict #123;abstract#125;
+  +update_profile(username, changes) bool #123;abstract#125;
+  +save_plan(plan, user_id) None #123;abstract#125;
+  +plans_for_user(user_id) dict #123;abstract#125;
+  +profile_exists(username) bool
+  +get_profile(username) UserProfile
+}
+class SqliteDataManager {
+  -_db_path : str
+  -_connect() Connection
+  -_execute(sql, params) object
+}
+AIProvider <|.. GeminiProvider
+AIProvider <|.. StubAIProvider
+AIProvider <|.. ParallelAIProvider
+ParallelAIProvider o-- "1..*" AIProvider : races in threads
+ParallelAIProvider ..> AIHandlerManager : validates with is_valid
+ParallelAIProvider ..> AllProvidersFailedError : raises
+AIManager o-- AIProvider
+AIManager *-- PromptBuilder
+AIManager --> AIHandlerManager : delegates parsing
+AIHandlerManager ..> MealCandidate : creates
+DataManager <|-- SqliteDataManager

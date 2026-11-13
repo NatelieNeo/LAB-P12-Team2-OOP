@@ -4,7 +4,28 @@ Attributes are private or protected by naming convention (``__x`` / ``_x``)
 and exposed through read-only properties, so other classes cannot put an
 object into an inconsistent state by assigning to its fields directly.
 """
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+
+@dataclass(frozen=True)
+class AIResponseSet:
+    """One validated provider response with monotonic worker timing."""
+
+    provider: str
+    candidates: Tuple["MealCandidate", ...]
+    started_at: float
+    completed_at: float
+
+
+@dataclass(frozen=True)
+class ResponseSelection:
+    """LogicManager's winning complete set and its independently built plan."""
+
+    response: AIResponseSet
+    plan: "MealPlan"
+    score: float
+    components: Dict[str, float]
 
 
 class IngredientParser:
@@ -44,6 +65,7 @@ class UserProfile:
     _ACTIVITY_ALIASES = {"moderately_active": "moderate"}
     _NO_RESTRICTION_WORDS = {"", "nil", "none", "no", "no restrictions", "n/a", "na"}
     _RESTRICTION_PREFIXES = (
+        "no ", "without ", "avoid ",
         "i am allergic to ", "i'm allergic to ", "allergic to ", "allergy to ",
         "allergies to ", "intolerant to ", "intolerance to ", "allergy: ", "allergies: ",
     )
@@ -189,7 +211,8 @@ class MealPlanRequest:
     SOURCE_LABELS = {"home_cooked": "in", "eat_out": "out", "both": "both"}
 
     def __init__(self, profile: UserProfile, meal_preference: str = "", meal_source: str = "both",
-                 pantry_ingredients: Any = None, daily_budget: Optional[float] = None):
+                 pantry_ingredients: Any = None, daily_budget: Optional[float] = None,
+                 strict_budget: bool = False):
         self._profile = profile
         self._meal_preference = str(meal_preference or "").strip()
         self._meal_source = self.SOURCE_ALIASES.get(str(meal_source).strip().lower(), "both")
@@ -197,6 +220,7 @@ class MealPlanRequest:
             pantry_ingredients = [item.strip() for item in pantry_ingredients.split(",") if item.strip()]
         self._pantry_ingredients = list(pantry_ingredients or [])
         self._daily_budget = daily_budget
+        self._strict_budget = strict_budget
 
     @property
     def profile(self) -> UserProfile:
@@ -231,6 +255,11 @@ class MealPlanRequest:
             "pantry_ingredients": list(self._pantry_ingredients),
             "daily_budget": self._daily_budget,
         }
+
+    @property
+    def strict_budget(self) -> bool:
+        """A request-only hard limit; existing budgets remain advisory by default."""
+        return self._strict_budget
 
 
 class NutritionTargets:
@@ -453,6 +482,15 @@ class MealPlan:
         self._total_calories = 0
         self._costs: List[float] = []
         self._stored_total_cost: Optional[float] = None
+        self._ai_selection: Dict[str, Any] = {}
+
+    def set_ai_selection(self, provider: str, score: float, components: Dict[str, float]) -> None:
+        """Request-local comparison metadata; no database migration is needed."""
+        self._ai_selection = {"provider": provider, "score": score, "components": dict(components)}
+
+    @property
+    def ai_selection(self) -> Dict[str, Any]:
+        return dict(self._ai_selection)
 
     def add_meal(self, meal: PlannedMeal) -> None:
         self._meals[meal.slot] = meal
@@ -491,7 +529,7 @@ class MealPlan:
     def total_cost(self) -> Optional[float]:
         if self._stored_total_cost is not None:
             return self._stored_total_cost
-        return sum(self._costs) if self._costs else None
+        return round(sum(self._costs), 2) if self._costs else None
 
     @property
     def within_budget(self) -> bool:
@@ -520,6 +558,7 @@ class MealPlan:
             "total_cost": self.total_cost,
             "within_budget": self.within_budget,
             "explanation": self.explanation,
+            "ai_selection": self.ai_selection,
         }
 
     @classmethod

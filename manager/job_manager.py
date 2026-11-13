@@ -1,24 +1,26 @@
 """Background plan generation (ADVANCED FEATURE: threading).
 
-Generating a plan waits several seconds on the AI. The web UI hands the work to
-a thread pool and polls for the result; the CLI shows a spinner thread."""
+Generating a plan waits several seconds on the AI. The controller can submit
+jobs to this thread pool; the CLI uses the spinner. Current Flask routes call
+the controller synchronously while multi-AI workers overlap API waiting."""
+
+from enum import Enum
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 import itertools
 import logging
 import sys
 import threading
 import time
 import uuid
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
-from enum import Enum
 from typing import Any, Callable, Optional
 
 from config import MAX_TRACKED_JOBS, PLAN_WORKER_THREADS
 from manager.exceptions import CaloraError
 from manager.models import MealPlan
 
-logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
 
 class JobStatus(Enum):
     PENDING = "PENDING"

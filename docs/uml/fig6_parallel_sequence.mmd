@@ -1,0 +1,44 @@
+sequenceDiagram
+    participant M as AIManager
+    participant P as ParallelAIProvider
+    participant E as ThreadPoolExecutor
+    participant G1 as GeminiProvider (primary)
+    participant G2 as GeminiProvider (fallback)
+    participant H as AIHandlerManager
+
+    M->>P: generate(prompt)
+    activate P
+    P->>E: submit(_ask, primary, prompt)
+    P->>E: submit(_ask, fallback, prompt)
+
+    par worker thread ai-provider_0
+        E->>G1: generate(prompt)
+        G1-->>E: text or AIConnectionError
+        E->>H: is_valid(text)
+        H-->>E: True or False
+    and worker thread ai-provider_1
+        E->>G2: generate(prompt)
+        G2-->>E: text or AIConnectionError
+        E->>H: is_valid(text)
+        H-->>E: True or False
+    end
+
+    loop until a valid answer or the timeout
+        P->>E: wait(pending, FIRST_COMPLETED)
+        E-->>P: finished futures
+        alt a finished future holds a valid answer
+            P->>P: last_winner = provider.name
+            P-->>M: text (the slower thread is ignored)
+        else it failed or was invalid
+            P->>P: failures[provider.name] = error
+        end
+    end
+
+    alt at least one connection error or timeout
+        P-->>M: raise AllProvidersFailedError(failures)
+    else every model answered, none validly
+        P-->>M: raise AIResponseError
+    end
+    deactivate P
+
+    Note over M: AIManager retries up to MAX_RETRIES times,<br/>unless the error is not retryable (e.g. no API key)

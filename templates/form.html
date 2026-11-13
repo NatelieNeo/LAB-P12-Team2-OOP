@@ -32,6 +32,7 @@
     <label>Meal source<select name="meal_source" id="meal_source"><option value="in" {% if profile.get('meal_source') == "in" %}selected{% endif %}>in</option><option value="out" {% if profile.get('meal_source') == "out" %}selected{% endif %}>out</option><option value="both" {% if profile.get('meal_source', 'both') == "both" %}selected{% endif %}>both</option></select></label>
     <label class="wide">Ingredients available<input name="ingredients" id="ingredients" value="{{ profile.get('ingredients', '') }}" placeholder="e.g. chicken, rice, lettuce"></label>
     <label>Daily budget<input name="budget" type="number" min="0" step="0.01" value="{{ profile.get('budget', '') }}" placeholder="e.g. 20, or 0"></label>
+    <label class="wide">Strict budget<select name="strict_budget"><option value="no">Advisory budget</option><option value="yes">Keep the full day's plan within budget</option></select></label>
     {% endif %}
     <button class="generate-button" type="submit">{{ submit_label }}</button>
 </form>
