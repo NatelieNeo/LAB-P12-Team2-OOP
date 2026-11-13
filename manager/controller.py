@@ -4,7 +4,9 @@ import logging
 from typing import Dict, List, Optional
 
 import config
+from manager.ai_handler_manager import AIHandlerManager
 from manager.ai_manager import AIManager, AIProvider, GeminiProvider
+from manager.ai_parallel import ParallelAIProvider
 from manager.data_manager import DataManager, JsonDataManager, SqliteDataManager
 from manager.exceptions import NoSuitableMealsError
 from manager.job_manager import PlanJob, PlanJobManager
@@ -80,10 +82,24 @@ class AppFactory:
         return JsonDataManager(config.USER_FILE, config.MEAL_PLAN_FILE)
 
     @staticmethod
+    def build_ai_provider() -> AIProvider:
+        """Two Gemini models asked in parallel (first valid answer wins), or just the
+        primary model when parallel mode is off or both names are the same."""
+        primary = GeminiProvider(model=config.GEMINI_MODEL)
+        fallback_model = config.get_fallback_model()
+        if not config.is_parallel_ai_enabled() or not fallback_model or fallback_model == config.GEMINI_MODEL:
+            return primary
+        return ParallelAIProvider(
+            [primary, GeminiProvider(model=fallback_model)],
+            validator=AIHandlerManager().is_valid,
+            timeout=config.PARALLEL_TIMEOUT_SECONDS,
+        )
+
+    @staticmethod
     def build_controller(provider: Optional[AIProvider] = None, data: Optional[DataManager] = None,
                          jobs: Optional[PlanJobManager] = None) -> CaloraController:
         return CaloraController(
-            ai=AIManager(provider or GeminiProvider()),
+            ai=AIManager(provider or AppFactory.build_ai_provider()),
             logic=LogicManager(),
             data=data or AppFactory.build_data_manager(),
             jobs=jobs or PlanJobManager(),
