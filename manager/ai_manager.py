@@ -366,7 +366,12 @@ Use exactly the following structure:
 
 
 class AIManager:
+    """Gets meal candidates from an AI provider, retrying on failure.
 
+    The provider is injected (aggregation), so Gemini can be swapped for the
+    offline stub without changing this class. The prompt builder is owned by
+    this manager (composition)."""
+    
     def __init__(self, provider: AIProvider, handler: Optional[AIHandlerManager] = None,
                  prompt_builder: Optional[PromptBuilder] = None,
                  max_retries: int = MAX_RETRIES, retry_delay: float = RETRY_DELAY_SECONDS):
