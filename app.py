@@ -1,23 +1,43 @@
 """Flask web application for Calora's meal planner."""
 
 import os
+import logging
+import threading
+
+from dotenv import load_dotenv
 
 from flask import Flask, redirect, render_template, request, session, url_for
 
-from manager.ai_manager import call_ai
-from manager.data_manager import (
-    get_meal_plans_by_user,
-    load_user_profiles,
-    save_meal_plan,
-    save_user_profile,
-    update_user_profile,
-)
-from manager.logic_manager import build_meal_plan
+from manager.controller import AppFactory
+from manager.exceptions import CaloraError, InvalidInputError
+from manager.io_manager import IOManager
+from manager.models import MealPlanRequest, UserProfile
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(threadName)s %(message)s")
+for sdk_logger in ("httpx", "httpx2", "httpcore", "httpcore2", "anthropic", "google.genai", "google_genai"):
+    logging.getLogger(sdk_logger).setLevel(logging.WARNING)
 
 HOST = "127.0.0.1"
 PORT = 8080
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "calora-development-key")
+io = IOManager()
+_controller_lock = threading.Lock()
+
+
+def get_controller():
+    """Create managers lazily; tests may inject a controller in app.extensions."""
+    with _controller_lock:
+        if "calora_controller" not in app.extensions:
+            app.extensions["calora_controller"] = AppFactory.build_controller()
+        return app.extensions["calora_controller"]
+
+
+@app.errorhandler(CaloraError)
+def application_error(error):
+    status = 400 if isinstance(error, InvalidInputError) else 503
+    return render_template("error.html", message=str(error)), status
 
 
 def render_form(
@@ -42,57 +62,32 @@ def render_form(
 
 def build_input_record(form_data: dict[str, str]) -> dict:
     """Convert browser form values into the shape used by the project layers."""
-    restrictions = [
-        item.strip()
-        for item in form_data.get("dietary_restrictions", "").split(",")
-        if item.strip()
-    ]
-    if restrictions == ["nil"]:
-        restrictions = []
-    pantry = [
-        item.strip()
-        for item in form_data.get("ingredients", "").split(",")
-        if item.strip()
-    ]
-    if form_data.get("meal_source") == "out":
-        pantry = []  # no pantry needed when eating out
-    gender = {"M": "male", "F": "female"}.get(form_data["gender"], form_data["gender"])
-    activity_level = {
-        "moderately active": "moderate",
-        "very active": "very_active",
-    }.get(form_data["activity_level"], form_data["activity_level"])
-    meal_source = {"in": "home_cooked", "out": "eat_out"}.get(
-        form_data.get("meal_source", "both"), form_data.get("meal_source", "both")
-    )
-    return {
-        "username": form_data["username"].strip(),
-        "name": form_data["name"].strip(),
-        "age": int(form_data["age"]),
-        "gender": gender,
-        "weight_kg": float(form_data["weight_kg"]),
-        "height_cm": float(form_data["height_cm"]),
-        "activity_level": activity_level,
-        "goal": form_data["goal"],
-        "dietary_restrictions": restrictions,
-        "meal_preference": form_data.get("meal_preference", "").strip(),
-        "meal_source": meal_source,
-        "pantry_ingredients": pantry,
-        "daily_budget": float(form_data["budget"]) if form_data.get("budget") else None,
-    }
+    profile = io.read_profile_form(form_data)
+    meal_request = io.read_request_form(form_data, profile)
+    return {**profile.to_dict(), **meal_request.to_preferences(), "strict_budget": meal_request.strict_budget}
 
 
 def generate_plan(input_record: dict) -> dict | None:
-    ai_output = call_ai(input_record)
-    if ai_output is None:
-        return None
-    return build_meal_plan(ai_output.get("recommendations", []), input_record)
+    profile = UserProfile.from_dict(input_record)
+    meal_request = MealPlanRequest(profile, input_record.get("meal_preference", ""),
+                                   input_record.get("meal_source", "both"),
+                                   input_record.get("pantry_ingredients", []),
+                                   input_record.get("daily_budget"), input_record.get("strict_budget", False))
+    controller = get_controller()
+    plan = controller.create_meal_plan(meal_request)
+    shopping = controller.get_shopping_list(plan, meal_request)
+    result = plan.to_dict()
+    # Render quantity/unit labels instead of dict representations in Jinja.
+    for slot, meal in plan.meals.items():
+        result["meals"][slot]["pantry_ingredients_used"] = meal.ingredient_labels
+    result.update(shopping_items=shopping.items, shopping_covered=shopping.covered_by_pantry,
+                  disclaimer=io.allergen_notice(plan))
+    return result
 
 
 def profile_for_username(username: str) -> dict | None:
-    matches = load_user_profiles("username", username.strip())
-    if not matches:
-        return None
-    return next(iter(matches.values()))
+    profile = get_controller().get_profile(username)
+    return profile.to_dict() if profile else None
 
 
 def profile_form_values(profile: dict) -> dict:
@@ -118,9 +113,9 @@ def profile_form_values(profile: dict) -> dict:
 def save_or_update_profile(input_record: dict) -> None:
     username = input_record["username"]
     if profile_for_username(username) is None:
-        save_user_profile(input_record)
+        get_controller().register_profile(UserProfile.from_dict(input_record))
     else:
-        update_user_profile(username, input_record)
+        get_controller().update_profile(username, UserProfile.from_dict(input_record))
 
 
 @app.get("/")
@@ -166,11 +161,9 @@ def plan() -> str:
     form_data.update(request.form.to_dict())
     form_data["username"] = username
     input_record = build_input_record(form_data)
-    save_or_update_profile(input_record)
     result = generate_plan(input_record)
     if result is None:
         return render_template("error.html", message="Unable to generate a meal plan right now."), 503
-    save_meal_plan(result, input_record["username"])
     return render_template("plan.html", result=result, show_actions=True)
 
 
@@ -179,7 +172,7 @@ def create_profile() -> str:
     input_record = build_input_record(request.form.to_dict())
     if profile_for_username(input_record["username"]) is not None:
         return render_template("welcome.html", message="That username already exists. Please sign in.")
-    save_user_profile(input_record)
+    get_controller().register_profile(UserProfile.from_dict(input_record))
     session["username"] = input_record["username"]
     return redirect(url_for("profile"))
 
@@ -223,7 +216,7 @@ def update_profile() -> str:
     if profile_for_username(input_record["username"]) is None:
         session.clear()
         return redirect(url_for("index"))
-    update_user_profile(input_record["username"], input_record)
+    get_controller().update_profile(input_record["username"], UserProfile.from_dict(input_record))
     return render_template("profile.html", profile=profile_form_values(input_record), message="Profile updated successfully.")
 
 
@@ -233,7 +226,7 @@ def plans() -> str:
     if not username or profile_for_username(username) is None:
         session.clear()
         return redirect(url_for("index"))
-    meal_plans = list(get_meal_plans_by_user(username).values())
+    meal_plans = [plan.to_dict() for plan in get_controller().get_history(username).values()]
     return render_template("history.html", username=username, meal_plans=meal_plans)
 
 

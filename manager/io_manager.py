@@ -1,5 +1,6 @@
 """IO Manager: everything the user types or reads (terminal and web form)."""
 from typing import Any, Callable, Dict, List, Mapping, Optional
+import math
 
 from manager.exceptions import InvalidInputError
 from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
@@ -97,12 +98,20 @@ class UserInputValidator:
             raise InvalidInputError("Please enter your budget as a number.") from None
         if value == 0:
             return None
-        if value < self.MIN_BUDGET:
+        if not math.isfinite(value) or value < self.MIN_BUDGET:
             raise InvalidInputError(f"The minimum daily budget is ${self.MIN_BUDGET} (enter 0 for none).")
         return value
 
     def parse_list(self, raw: Any) -> List[str]:
         return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+
+    def validate_strict_budget(self, raw: Any) -> bool:
+        value = str(raw or "").strip().lower()
+        if value in ("", "no", "n", "0", "false"):
+            return False
+        if value in ("yes", "y", "1", "true", "on"):
+            return True
+        raise InvalidInputError("Please enter yes or no for the strict budget.")
 
 
 class IOManager:
@@ -196,7 +205,9 @@ class IOManager:
         budget = self._ask(
             f"What's your total budget for the day? (minimum ${v.MIN_BUDGET}) (enter '0' for none): ",
             v.validate_budget)
-        return MealPlanRequest(profile, preference, source, pantry, budget)
+        strict = self._ask("Must the plan stay within this budget? (yes/no, blank=no): ",
+                           v.validate_strict_budget) if budget is not None else False
+        return MealPlanRequest(profile, preference, source, pantry, budget, strict)
 
     def prompt_menu_choice(self) -> str:
         for line in self.MENU:
@@ -235,6 +246,9 @@ class IOManager:
             lines.append(f"Cost: {meal['cost_tier']}")
         if data["missing_slots"]:
             lines.extend(["", "Missing meals: " + ", ".join(data["missing_slots"])])
+        if plan.ai_selection:
+            lines.append(f"Selected AI: {plan.ai_selection['provider']} (score {plan.ai_selection['score']:.2f}/100)")
+        lines.append("Nutrition and prices are AI estimates, not independently verified values.")
         notice = self.allergen_notice(plan)
         if notice:
             lines.extend(["", notice])
@@ -283,4 +297,5 @@ class IOManager:
             profile,
             v.validate_meal_preference(form.get("meal_preference")),
             source, pantry, v.validate_budget(form.get("budget")),
+            v.validate_strict_budget(form.get("strict_budget")),
         )

@@ -1,13 +1,13 @@
 """CaloraController coordinates the AI, Logic and Data managers for both user
 interfaces, and AppFactory assembles the real objects (the composition root)."""
 import logging
+import os
 from typing import Dict, Optional
 
 import config
 from manager.ai_handler_manager import AIHandlerManager
-from manager.ai_manager import AIManager, AIProvider, GeminiProvider
+from manager.ai_manager import AIManager, AIProvider, ClaudeProvider, GeminiProvider, MultiAIRecommendationManager
 from manager.data_manager import DataManager, SqliteDataManager
-from manager.ai_manager import AIManager, AIProvider, GeminiProvider
 from manager.ai_parallel import ParallelAIProvider
 from manager.exceptions import NoSuitableMealsError
 from manager.job_manager import PlanJob, PlanJobManager
@@ -21,7 +21,8 @@ class CaloraController:
     """The managers are injected (aggregation): each exists independently and
     can be swapped, e.g. the offline stub provider or the SQLite data manager."""
 
-    def __init__(self, ai: AIManager, logic: LogicManager, data: DataManager, jobs: PlanJobManager):
+    def __init__(self, ai: AIManager | MultiAIRecommendationManager, logic: LogicManager,
+                 data: DataManager, jobs: PlanJobManager):
         self._ai = ai
         self._logic = logic
         self._data = data
@@ -46,8 +47,14 @@ class CaloraController:
         NoSuitableMealsError if every candidate is filtered out."""
         profile = request.profile
         targets = self._logic.calculate_targets(profile)
-        candidates = self._ai.get_recommendations(request, targets)
-        plan = self._logic.build_meal_plan(candidates, request)
+        if isinstance(self._ai, MultiAIRecommendationManager):
+            responses = self._ai.get_response_sets(request, targets)
+            selection = self._logic.select_response_sets(responses, request)
+            plan = selection.plan
+            plan.set_ai_selection(selection.response.provider, selection.score, selection.components)
+        else:
+            candidates = self._ai.get_recommendations(request, targets)
+            plan = self._logic.build_meal_plan(candidates, request)
         if plan is None:
             raise NoSuitableMealsError("No meals fit your restrictions and preferences. Try relaxing them.")
         self._data.update_profile(profile.username, request.to_preferences())
@@ -76,22 +83,12 @@ class AppFactory:
         return SqliteDataManager(config.SQLITE_DB_FILE)
 
     @staticmethod
-    def build_controller(provider: Optional[AIProvider] = None, data: Optional[DataManager] = None,
-                         jobs: Optional[PlanJobManager] = None) -> CaloraController:
-        return CaloraController(
-            ai=AIManager(provider or GeminiProvider()),
-            logic=LogicManager(),
-            data=data or AppFactory.build_data_manager(),
-            jobs=jobs or PlanJobManager(),
-        )
-
-    @staticmethod
     def build_ai_provider() -> AIProvider:
         """Two Gemini models asked in parallel (first valid answer wins), or just the
         primary model when parallel mode is off or both names are the same."""
-        primary = GeminiProvider(model=config.GEMINI_MODEL)
+        primary = GeminiProvider()
         fallback_model = config.get_fallback_model()
-        if not config.is_parallel_ai_enabled() or not fallback_model or fallback_model == config.GEMINI_MODEL:
+        if not config.is_parallel_ai_enabled() or not fallback_model or fallback_model == config.get_gemini_model():
             return primary
         return ParallelAIProvider(
             [primary, GeminiProvider(model=fallback_model)],
@@ -103,9 +100,22 @@ class AppFactory:
     def build_controller(provider: Optional[AIProvider] = None, data: Optional[DataManager] = None,
                          jobs: Optional[PlanJobManager] = None) -> CaloraController:
         return CaloraController(
-            ai=AIManager(provider or AppFactory.build_ai_provider()),
+            ai=AIManager(provider) if provider is not None else AppFactory.build_ai_manager(),
             logic=LogicManager(),
             data=data or AppFactory.build_data_manager(),
             jobs=jobs or PlanJobManager(),
         )
+
+    @staticmethod
+    def build_ai_manager() -> AIManager | MultiAIRecommendationManager:
+        """Explicit modes use exactly the requested providers; no silent fallback."""
+        mode = config.get_ai_mode()
+        logger.info("[MultiAI] Configured AI mode: %s", mode)
+        if mode == "multi":
+            return MultiAIRecommendationManager([GeminiProvider(), ClaudeProvider()])
+        if mode == "claude":
+            return AIManager(ClaudeProvider())
+        # Preserve the old two-Gemini race only when AI_MODE is unspecified.
+        return AIManager(GeminiProvider() if os.getenv("AI_MODE", "").strip()
+                         else AppFactory.build_ai_provider())
 
