@@ -1,6 +1,7 @@
 
 import json
 import logging
+import math
 from typing import Any, List
 
 from config import RECOMMENDATION_COUNT
@@ -23,7 +24,12 @@ class AIHandlerManager:
 
     @staticmethod
     def _is_number(value: Any) -> bool:
-        return isinstance(value, (int, float))
+        if type(value) not in (int, float) or value < 0:
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
 
     def _validate_targets(self, targets: Any) -> bool:
         return (isinstance(targets, dict)
@@ -37,11 +43,27 @@ class AIHandlerManager:
             return False
         if recommendation["meal_source_type"] not in self.MEAL_SOURCE_TYPES:
             return False
+        if recommendation["meal_type"] not in ("breakfast", "lunch", "dinner"):
+            return False
+        if not isinstance(recommendation["meal_name"], str) or not recommendation["meal_name"].strip():
+            return False
         return (
             all(isinstance(recommendation[f], str) for f in self.STRING_FIELDS)
             and all(self._is_number(recommendation[f]) for f in self.NUMERIC_FIELDS)
             and all(isinstance(recommendation[f], list) for f in self.LIST_FIELDS)
+            and recommendation["calories"] > 0
+            and all(isinstance(item, str) for item in recommendation["pantry_ingredients_used"])
+            and all(isinstance(item, str) for item in recommendation["recipe_steps"])
+            and all(self._valid_ingredient(item) for item in recommendation["ingredients"])
         )
+
+    @staticmethod
+    def _valid_ingredient(item: Any) -> bool:
+        if isinstance(item, str):
+            return bool(item.strip())
+        return (isinstance(item, dict) and isinstance(item.get("item"), str)
+                and bool(item["item"].strip()) and isinstance(item.get("unit", ""), str)
+                and isinstance(item.get("quantity", ""), (int, float, str)))
     
     def _validate_recommendations(self, recommendations: Any) -> bool:
         return (isinstance(recommendations, list)
@@ -55,17 +77,17 @@ class AIHandlerManager:
                 and self._validate_recommendations(data["recommendations"]))
     
     def is_valid(self, response_text: str) -> bool:
-            try:
-                self.parse_response(response_text)
-            except AIResponseError:
-                return False
-            return True
+        try:
+            self.parse_response(response_text)
+        except AIResponseError:
+            return False
+        return True
     
     def parse_response(self, response_text: str) -> List[MealCandidate]:
         """Text -> validated MealCandidate objects.
 
         Raises AIResponseError for an empty, non-JSON or schema-invalid response."""
-        if not response_text:
+        if not isinstance(response_text, str) or not response_text:
             raise AIResponseError("The AI returned an empty response.")
         try:
             data = json.loads(response_text)

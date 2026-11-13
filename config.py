@@ -1,7 +1,65 @@
 """Central settings. Secrets (the API key) are read from the environment, never stored here."""
 import os
+import math
 
 GEMINI_MODEL = "gemini-3.1-flash-lite"
+CLAUDE_MODEL = "claude-sonnet-5-5"
+AI_REQUEST_TIMEOUT_SECONDS = 45.0
+AI_TOTAL_TIMEOUT_SECONDS = 60.0
+AI_MAX_OUTPUT_TOKENS = 8192
+
+
+def get_gemini_model() -> str:
+    return os.getenv("GEMINI_MODEL", GEMINI_MODEL).strip()
+
+
+def get_claude_model() -> str:
+    return os.getenv("CLAUDE_MODEL", CLAUDE_MODEL).strip()
+
+
+def get_ai_mode() -> str:
+    """Prefer multi when both keys exist; otherwise preserve the Gemini workflow."""
+    mode = os.getenv("AI_MODE", "").strip().lower()
+    if not mode:
+        return "multi" if os.getenv("GEMINI_API_KEY") and os.getenv("ANTHROPIC_API_KEY") else "gemini"
+    if mode not in ("gemini", "claude", "multi"):
+        from manager.exceptions import InvalidInputError
+        raise InvalidInputError("AI_MODE must be gemini, claude or multi.")
+    return mode
+
+
+def get_ai_timeout() -> float:
+    return _positive_setting("AI_REQUEST_TIMEOUT_SECONDS", AI_REQUEST_TIMEOUT_SECONDS)
+
+
+def get_ai_total_timeout() -> float:
+    return _positive_setting("AI_TOTAL_TIMEOUT_SECONDS", AI_TOTAL_TIMEOUT_SECONDS)
+
+
+def get_max_output_tokens() -> int:
+    value = _positive_setting("AI_MAX_OUTPUT_TOKENS", AI_MAX_OUTPUT_TOKENS)
+    if not value.is_integer():
+        from manager.exceptions import InvalidInputError
+        raise InvalidInputError("AI_MAX_OUTPUT_TOKENS must be a positive integer.")
+    return int(value)
+
+
+def _positive_setting(name: str, default: float) -> float:
+    from manager.exceptions import InvalidInputError
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        raise InvalidInputError(f"{name} must be a positive finite number.") from None
+    if not math.isfinite(value) or value <= 0:
+        raise InvalidInputError(f"{name} must be a positive finite number.")
+    return value
+
+
+# Components are bounded to 0..1; the resulting score is out of 100.
+RESPONSE_SCORE_WEIGHTS = {
+    "calories": 30, "macros": 25, "budget": 15, "preference": 10,
+    "source": 5, "pantry": 5, "variety": 5, "practicality": 5,
+}
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 1.0
 RECOMMENDATION_COUNT = 10
