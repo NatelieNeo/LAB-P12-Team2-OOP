@@ -1,13 +1,22 @@
-"""SQLite data manager for user profiles and meal plans."""
+"""Data Manager: stores profiles and meal plans.
+
+DataManager is an abstract class: it defines what every storage backend must
+do and supplies the behaviour they share. JsonDataManager and SqliteDataManager
+are interchangeable (LSP), so the rest of the program never cares which is used."""
+import json
+import logging
 import os
 import sqlite3
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-from config import SQLITE_DB_FILE
+from config import MEAL_PLAN_FILE, SQLITE_DB_FILE, USER_FILE
 from manager.exceptions import StorageError
 from manager.models import MealPlan, PlannedMeal, UserProfile
+
+logger = logging.getLogger(__name__)
 
 
 class DataManager(ABC):
@@ -40,6 +49,82 @@ class DataManager(ABC):
     def get_profile(self, username: str) -> "UserProfile | None":
         matches = self.find_profiles("username", username)
         return next(iter(matches.values()), None)
+
+
+class JsonDataManager(DataManager):
+    """Stores records in two JSON files. A lock makes every read-modify-write
+    atomic between threads, so concurrent saves cannot overwrite each other."""
+
+    def __init__(self, user_file: str = USER_FILE, plan_file: str = MEAL_PLAN_FILE):
+        self._user_file = user_file
+        self._plan_file = plan_file
+        self._lock = threading.Lock()
+
+    def _read_json(self, path: str) -> Dict[str, Any]:
+        """A missing file is empty. A corrupt file is moved aside (not overwritten)
+        and treated as empty."""
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except json.JSONDecodeError:
+            backup = path + ".corrupt"
+            logger.warning("%s is not valid JSON; keeping a copy at %s", path, backup)
+            try:
+                os.replace(path, backup)
+            except OSError as error:
+                raise StorageError(f"Could not set aside corrupt file {path}: {error}") from error
+            return {}
+        except OSError as error:
+            raise StorageError(f"Could not read {path}: {error}") from error
+
+    def _write_json(self, path: str, data: Dict[str, Any]) -> None:
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            temp_path = path + ".tmp"
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=1)
+            os.replace(temp_path, path)
+        except OSError as error:
+            raise StorageError(f"Could not write {path}: {error}") from error
+
+    def save_profile(self, profile: UserProfile) -> None:
+        with self._lock:
+            users = self._read_json(self._user_file)
+            users[str(uuid.uuid4())] = profile.to_dict()
+            self._write_json(self._user_file, users)
+
+    def find_profiles(self, key: str, value: Any) -> Dict[str, UserProfile]:
+        with self._lock:
+            users = self._read_json(self._user_file)
+        return {entry_id: UserProfile.from_dict(data) for entry_id, data in users.items()
+                if data.get(key) == value}
+
+    def update_profile(self, username: str, changes: Dict[str, Any]) -> bool:
+        with self._lock:
+            users = self._read_json(self._user_file)
+            for data in users.values():
+                if data.get("username") == username:
+                    data.update(changes)
+                    self._write_json(self._user_file, users)
+                    return True
+        return False
+
+    def save_plan(self, plan: MealPlan, user_id: str) -> None:
+        record = plan.to_dict()
+        record["user_id"] = user_id
+        with self._lock:
+            plans = self._read_json(self._plan_file)
+            plans[str(uuid.uuid4())] = record
+            self._write_json(self._plan_file, plans)
+
+    def plans_for_user(self, user_id: str) -> Dict[str, MealPlan]:
+        with self._lock:
+            plans = self._read_json(self._plan_file)
+        return {entry_id: MealPlan.from_dict(data) for entry_id, data in plans.items()
+                if data.get("user_id") == user_id}
 
 
 class SqliteDataManager(DataManager):
@@ -158,6 +243,20 @@ class SqliteDataManager(DataManager):
                         meal_id    INTEGER NOT NULL REFERENCES meals(meal_id) ON DELETE CASCADE,
                         ingredient TEXT NOT NULL,
                         PRIMARY KEY (meal_id, ingredient)
+                    );
+
+                    -- Recipe feature: portion size and ordered cooking steps of a home-cooked meal.
+                    -- New tables (not new columns), so an existing calora.db upgrades in place.
+                    CREATE TABLE IF NOT EXISTS meal_recipes (
+                        meal_id      INTEGER PRIMARY KEY REFERENCES meals(meal_id) ON DELETE CASCADE,
+                        portion_size TEXT NOT NULL DEFAULT ''
+                    );
+
+                    CREATE TABLE IF NOT EXISTS meal_recipe_steps (
+                        meal_id     INTEGER NOT NULL REFERENCES meals(meal_id) ON DELETE CASCADE,
+                        step_no     INTEGER NOT NULL CHECK (step_no > 0),
+                        instruction TEXT NOT NULL,
+                        PRIMARY KEY (meal_id, step_no)
                     );
                     """
                 )
@@ -339,6 +438,16 @@ class SqliteDataManager(DataManager):
                             "INSERT INTO meal_ingredients (meal_id, ingredient) VALUES (?, ?)",
                             (meal_id, ingredient),
                         )
+                    if meal.portion_size or meal.recipe_steps:
+                        connection.execute(
+                            "INSERT INTO meal_recipes (meal_id, portion_size) VALUES (?, ?)",
+                            (meal_id, meal.portion_size),
+                        )
+                    for step_no, instruction in enumerate(meal.recipe_steps, start=1):
+                        connection.execute(
+                            "INSERT INTO meal_recipe_steps (meal_id, step_no, instruction) VALUES (?, ?, ?)",
+                            (meal_id, step_no, instruction),
+                        )
         except sqlite3.Error as error:
             raise StorageError(f"Could not save plan: {error}") from error
         finally:
@@ -378,6 +487,18 @@ class SqliteDataManager(DataManager):
                         fetch=True,
                     )
                 ]
+                portion_rows = self._execute(
+                    "SELECT portion_size FROM meal_recipes WHERE meal_id = ?",
+                    (meal_row["meal_id"],),
+                    fetch=True,
+                )
+                recipe_steps = [
+                    item[0] for item in self._execute(
+                        "SELECT instruction FROM meal_recipe_steps WHERE meal_id = ? ORDER BY step_no",
+                        (meal_row["meal_id"],),
+                        fetch=True,
+                    )
+                ]
                 plan._meals[meal_row["slot"]] = PlannedMeal(
                     slot=meal_row["slot"],
                     name=meal_row["name"],
@@ -391,6 +512,8 @@ class SqliteDataManager(DataManager):
                     ingredients=ingredients,
                     calories=None,
                     cost=None,
+                    recipe_steps=recipe_steps,
+                    portion_size=portion_rows[0][0] if portion_rows else "",
                 )
             plans[plan_id] = plan
         return plans

@@ -1,3 +1,28 @@
+{% if result.recipes %}
+<h2>Recipes</h2>
+{% for recipe in result.recipes %}
+<details class="recipe">
+    <summary>{{ recipe.slot|capitalize }}: {{ recipe.name }}</summary>
+    <div class="accordion-content">
+        {% if recipe.portion_size %}<p class="detail"><strong>Serves:</strong> {{ recipe.portion_size }}</p>{% endif %}
+        {% if recipe.ingredients %}
+        <p class="detail"><strong>Ingredients:</strong></p>
+        <ul class="recipe-ingredients">
+            {% for item in recipe.ingredients %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% if recipe.steps %}
+        <p class="detail"><strong>Steps:</strong></p>
+        <ol class="recipe-steps">
+            {% for step in recipe.steps %}<li>{{ step }}</li>{% endfor %}
+        </ol>
+        {% else %}
+        <p class="detail muted">No cooking instructions were saved for this meal.</p>
+        {% endif %}
+    </div>
+</details>
+{% endfor %}
+{% endif %}
 {% if result.missing_slots %}<p class="notice">Missing meals: {{ result.missing_slots|join(", ") }}</p>{% endif %}
 {% if result.ai_selection %}<p class="detail">Selected AI: {{ result.ai_selection.provider }} (suitability score {{ "%.2f"|format(result.ai_selection.score) }}/100)</p>{% endif %}
 <p class="detail muted">Nutrition and prices are AI estimates, not independently verified values.</p>

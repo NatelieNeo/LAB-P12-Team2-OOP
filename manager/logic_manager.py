@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from manager.models import (
     AIResponseSet, ResponseSelection,
     MealCandidate, MealPlan, MealPlanRequest, NutritionTargets,
-    PlannedMeal, ShoppingList, UserProfile,
+    PlannedMeal, Recipe, ShoppingList, UserProfile,
 )
 import config
 from manager.exceptions import NoSuitableMealsError
@@ -327,6 +327,8 @@ class MealTagger:
             ingredients=candidate.ingredients if home_cooked else [],
             calories=candidate.calories,
             cost=candidate.estimated_cost,
+            recipe_steps=candidate.recipe_steps if home_cooked else [],
+            portion_size=candidate.portion_size if home_cooked else "",
         )
 
 
@@ -352,6 +354,24 @@ class ShoppingListBuilder:
         return ShoppingList(to_buy, in_pantry)
 
 
+class RecipeBuilder:
+    """NEW FEATURE: turns the home-cooked meals of a plan into step-by-step
+    recipes, in breakfast, lunch, dinner order. Eat-out meals have no recipe."""
+
+    def build(self, plan: MealPlan) -> List[Recipe]:
+        meals = plan.meals
+        recipes = []
+        for slot in MealPlan.SLOTS:
+            meal = meals.get(slot)
+            if meal is None or meal.source_type != "home_cooked":
+                continue
+            recipes.append(Recipe(
+                slot=slot, name=meal.name, portion_size=meal.portion_size,
+                ingredients=meal.ingredient_labels, steps=meal.recipe_steps,
+            ))
+        return recipes
+
+
 # ---------------------------------------------------------------------
 # The manager
 # ---------------------------------------------------------------------
@@ -365,13 +385,15 @@ class LogicManager:
                  criteria: Optional[List[RankingCriterion]] = None,
                  calculator: Optional[NutritionCalculator] = None,
                  tagger: Optional[MealTagger] = None,
-                 shopping_builder: Optional[ShoppingListBuilder] = None):
+                 shopping_builder: Optional[ShoppingListBuilder] = None,
+                 recipe_builder: Optional[RecipeBuilder] = None):
         self._rules = rules if rules is not None else [DietarySafetyRule(), SourcePreferenceRule()]
         self._criteria = criteria if criteria is not None else [
             CalorieFitCriterion(), MacroFitCriterion(), PreferenceCriterion(), CostCriterion()]
         self._calculator = calculator or NutritionCalculator()
         self._tagger = tagger or MealTagger()
         self._shopping = shopping_builder or ShoppingListBuilder()
+        self._recipes = recipe_builder or RecipeBuilder()
 
     def calculate_targets(self, profile: UserProfile) -> NutritionTargets:
         return self._calculator.targets(profile)
@@ -425,6 +447,8 @@ class LogicManager:
     def build_shopping_list(self, plan: MealPlan, pantry: Sequence[str]) -> ShoppingList:
         return self._shopping.build(plan, pantry)
 
+    def build_recipes(self, plan: MealPlan) -> List[Recipe]:
+        return self._recipes.build(plan)
     @staticmethod
     def _fit(actual: float, target: float) -> float:
         """1 at target, decreasing linearly to 0 at 100% relative error."""

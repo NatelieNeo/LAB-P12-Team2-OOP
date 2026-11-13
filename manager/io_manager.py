@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 import math
 
 from manager.exceptions import InvalidInputError
-from manager.models import MealPlan, MealPlanRequest, ShoppingList, UserProfile
+from manager.models import MealPlan, MealPlanRequest, Recipe, ShoppingList, UserProfile
 
 
 class UserInputValidator:
@@ -122,7 +122,8 @@ class IOManager:
     ALLERGEN_NOTICE = ("Always check food labels and ask the stall about allergens. "
                        "Calora cannot guarantee a meal is allergen-free.")
     MENU = ("1. Create a meal plan", "2. View previous meal plans", "3. View your profile",
-            "4. Update your profile", "5. Exit the program")
+            "4. Update your profile", "5. Exit the program",
+            "R. View recipes from saved plans")
     SLOT_ORDER = MealPlan.SLOTS
 
     def __init__(self, validator: Optional[UserInputValidator] = None,
@@ -212,7 +213,7 @@ class IOManager:
     def prompt_menu_choice(self) -> str:
         for line in self.MENU:
             self._output(line)
-        return self._input("\nPlease select an option from the list below (1-5): ").strip()
+        return self._input("\nPlease select an option from the list below (1-5 or R): ").strip().upper()
 
     def pause(self) -> None:
         self._input("\nPress Enter to return to the main menu...")
@@ -268,6 +269,18 @@ class IOManager:
 
     def show_profile(self, profile: UserProfile) -> None:
         self._output(f"\nHere is your profile information:\n{self.format_profile(profile)}")
+
+    def format_recipes(self, recipes: List[Recipe]) -> str:
+        """Step-by-step instructions for the home-cooked meals; empty text if there are none."""
+        if not recipes:
+            return ""
+        blocks = [recipe.to_text() for recipe in recipes]
+        return "=== Step-by-step recipes ===\n\n" + "\n\n".join(blocks)
+
+    def show_recipes(self, recipes: List[Recipe]) -> None:
+        text = self.format_recipes(recipes)
+        if text:
+            self._output("\n" + text)
 
     def show_shopping_list(self, shopping_list: ShoppingList) -> None:
         self._output("\n" + shopping_list.to_text())

@@ -64,6 +64,9 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 1.0
 RECOMMENDATION_COUNT = 10
 
+USER_FILE = os.path.join("data", "user_profiles.json")
+MEAL_PLAN_FILE = os.path.join("data", "meal_plans.json")
+SQLITE_DB_FILE = os.path.join("data", "calora.db")
 DATA_FILE_ROOT = "data/"
 USER_FILE = os.path.join(DATA_FILE_ROOT, "user_profiles.json")
 MEAL_PLAN_FILE = os.path.join(DATA_FILE_ROOT, "meal_plans.json")
@@ -83,6 +86,11 @@ def get_storage_backend() -> str:
 
 # "json" (default) or "sqlite"; chosen with the CALORA_STORAGE environment variable
 STORAGE_BACKEND = get_storage_backend()
+
+
+def get_storage_backend() -> str:
+    """Resolve the storage backend after the app loads its environment."""
+    return os.getenv("CALORA_STORAGE", "sqlite").strip().lower()
 
 # Background plan generation (threading)
 PLAN_WORKER_THREADS = 4

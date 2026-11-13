@@ -389,7 +389,8 @@ class PlannedMeal:
     calories and cost are kept privately for the plan's totals."""
 
     def __init__(self, slot, name, source_type, calorie_range, calorie_tag, protein_tag,
-                 carbs_tag, fat_tag, cost_tier, ingredients=None, calories=None, cost=None):
+                 carbs_tag, fat_tag, cost_tier, ingredients=None, calories=None, cost=None,
+                 recipe_steps=None, portion_size=""):
         self._slot = slot
         self._name = name
         self._source_type = source_type
@@ -402,6 +403,8 @@ class PlannedMeal:
         self._ingredients = list(ingredients or [])
         self._calories = calories
         self._cost = cost
+        self._recipe_steps = [str(step).strip() for step in recipe_steps or [] if str(step).strip()]
+        self._portion_size = str(portion_size or "")
 
     @property
     def slot(self) -> str:
@@ -437,6 +440,15 @@ class PlannedMeal:
         return IngredientParser.labels(self._ingredients)
 
     @property
+    def recipe_steps(self) -> List[str]:
+        """Cooking instructions of a home-cooked meal; empty for eat-out meals."""
+        return list(self._recipe_steps)
+
+    @property
+    def portion_size(self) -> str:
+        return self._portion_size
+
+    @property
     def calories(self) -> Optional[float]:
         return self._calories
 
@@ -455,17 +467,77 @@ class PlannedMeal:
             "fat_tag": self._fat_tag,
             "cost_tier": self._cost_tier,
             "pantry_ingredients_used": list(self._ingredients),
+            "recipe_steps": list(self._recipe_steps),
+            "portion_size": self._portion_size,
         }
 
     @classmethod
     def from_dict(cls, slot: str, data: Dict[str, Any]) -> "PlannedMeal":
+        """Plans saved before the recipe feature have no steps; they load with none."""
         return cls(
             slot=slot, name=data.get("name"), source_type=data.get("source_type"),
             calorie_range=data.get("calorie_range"), calorie_tag=data.get("calorie_tag"),
             protein_tag=data.get("protein_tag"), carbs_tag=data.get("carbs_tag"),
             fat_tag=data.get("fat_tag"), cost_tier=data.get("cost_tier"),
             ingredients=data.get("pantry_ingredients_used"),
+            recipe_steps=data.get("recipe_steps"), portion_size=data.get("portion_size", ""),
         )
+
+
+class Recipe:
+    """NEW FEATURE: the cooking instructions for one home-cooked meal.
+
+    A read-only value object built from a PlannedMeal by RecipeBuilder."""
+
+    def __init__(self, slot: str, name: str, portion_size: str = "",
+                 ingredients: Optional[List[str]] = None, steps: Optional[List[str]] = None):
+        self._slot = slot
+        self._name = name
+        self._portion_size = portion_size
+        self._ingredients = list(ingredients or [])
+        self._steps = list(steps or [])
+
+    @property
+    def slot(self) -> str:
+        return self._slot
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def portion_size(self) -> str:
+        return self._portion_size
+
+    @property
+    def ingredients(self) -> List[str]:
+        return list(self._ingredients)
+
+    @property
+    def steps(self) -> List[str]:
+        return list(self._steps)
+
+    @property
+    def has_steps(self) -> bool:
+        return bool(self._steps)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"slot": self._slot, "name": self._name, "portion_size": self._portion_size,
+                "ingredients": list(self._ingredients), "steps": list(self._steps)}
+
+    def to_text(self) -> str:
+        lines = [f"{self._slot.capitalize()}: {self._name}"]
+        if self._portion_size:
+            lines.append(f"Serves: {self._portion_size}")
+        if self._ingredients:
+            lines.append("Ingredients:")
+            lines.extend(f"  - {label}" for label in self._ingredients)
+        if self._steps:
+            lines.append("Steps:")
+            lines.extend(f"  {number}. {step}" for number, step in enumerate(self._steps, start=1))
+        else:
+            lines.append("No cooking instructions were saved for this meal.")
+        return "\n".join(lines)
 
 
 class MealPlan:
