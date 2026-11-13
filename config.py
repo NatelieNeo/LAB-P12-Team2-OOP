@@ -1,12 +1,17 @@
 """Central settings. Secrets (the API key) are read from the environment, never stored here."""
-import os
+import logging
 import math
+import os
+
+from manager.exceptions import InvalidInputError
 
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 CLAUDE_MODEL = "claude-sonnet-5-5"
-AI_REQUEST_TIMEOUT_SECONDS = 45.0
-AI_TOTAL_TIMEOUT_SECONDS = 60.0
+AI_REQUEST_TIMEOUT_SECONDS = 60.0
+CLAUDE_REQUEST_TIMEOUT_SECONDS = 120.0
+AI_TOTAL_TIMEOUT_SECONDS = 450.0
 AI_MAX_OUTPUT_TOKENS = 8192
+CLAUDE_MAX_OUTPUT_TOKENS = 16384
 
 
 def get_gemini_model() -> str:
@@ -23,7 +28,6 @@ def get_ai_mode() -> str:
     if not mode:
         return "multi" if os.getenv("GEMINI_API_KEY") and os.getenv("ANTHROPIC_API_KEY") else "gemini"
     if mode not in ("gemini", "claude", "multi"):
-        from manager.exceptions import InvalidInputError
         raise InvalidInputError("AI_MODE must be gemini, claude or multi.")
     return mode
 
@@ -36,16 +40,38 @@ def get_ai_total_timeout() -> float:
     return _positive_setting("AI_TOTAL_TIMEOUT_SECONDS", AI_TOTAL_TIMEOUT_SECONDS)
 
 
+def get_claude_timeout() -> float:
+    """Allow more time for Claude to generate the complete ten-meal JSON response."""
+    return _positive_setting("CLAUDE_REQUEST_TIMEOUT_SECONDS", CLAUDE_REQUEST_TIMEOUT_SECONDS)
+
+
+def is_claude_backup_enabled() -> bool:
+    """Replace failed Claude requests in multi mode unless explicitly disabled."""
+    return os.getenv("CLAUDE_GEMINI_BACKUP", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def get_gemini_backup_model() -> str:
+    """Use the configured primary Gemini model unless a separate backup is set."""
+    return os.getenv("GEMINI_BACKUP_MODEL", "").strip() or get_gemini_model()
+
+
 def get_max_output_tokens() -> int:
-    value = _positive_setting("AI_MAX_OUTPUT_TOKENS", AI_MAX_OUTPUT_TOKENS)
+    return _positive_integer_setting("AI_MAX_OUTPUT_TOKENS", AI_MAX_OUTPUT_TOKENS)
+
+
+def get_claude_max_output_tokens() -> int:
+    """Leave enough output capacity for Claude's complete ten-meal response."""
+    return _positive_integer_setting("CLAUDE_MAX_OUTPUT_TOKENS", CLAUDE_MAX_OUTPUT_TOKENS)
+
+
+def _positive_integer_setting(name: str, default: int) -> int:
+    value = _positive_setting(name, default)
     if not value.is_integer():
-        from manager.exceptions import InvalidInputError
-        raise InvalidInputError("AI_MAX_OUTPUT_TOKENS must be a positive integer.")
+        raise InvalidInputError(f"{name} must be a positive integer.")
     return int(value)
 
 
 def _positive_setting(name: str, default: float) -> float:
-    from manager.exceptions import InvalidInputError
     try:
         value = float(os.getenv(name, str(default)))
     except ValueError:
@@ -64,9 +90,6 @@ MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 1.0
 RECOMMENDATION_COUNT = 10
 
-USER_FILE = os.path.join("data", "user_profiles.json")
-MEAL_PLAN_FILE = os.path.join("data", "meal_plans.json")
-SQLITE_DB_FILE = os.path.join("data", "calora.db")
 DATA_FILE_ROOT = "data/"
 USER_FILE = os.path.join(DATA_FILE_ROOT, "user_profiles.json")
 MEAL_PLAN_FILE = os.path.join(DATA_FILE_ROOT, "meal_plans.json")
@@ -84,13 +107,8 @@ def get_storage_backend() -> str:
     return os.getenv("CALORA_STORAGE", DEFAULT_STORAGE_BACKEND).strip().lower()
 
 
-# "json" (default) or "sqlite"; chosen with the CALORA_STORAGE environment variable
+# Compatibility alias; AppFactory uses get_storage_backend() after dotenv loads.
 STORAGE_BACKEND = get_storage_backend()
-
-
-def get_storage_backend() -> str:
-    """Resolve the storage backend after the app loads its environment."""
-    return os.getenv("CALORA_STORAGE", "sqlite").strip().lower()
 
 # Background plan generation (threading)
 PLAN_WORKER_THREADS = 4
@@ -112,3 +130,10 @@ def get_fallback_model() -> str:
 def is_parallel_ai_enabled() -> bool:
     """On by default; set CALORA_PARALLEL_AI=0 to use the single primary model."""
     return os.getenv("CALORA_PARALLEL_AI", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def configure_logging() -> None:
+    """Share readable application logs while suppressing SDK transport details."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(threadName)s %(message)s")
+    for sdk_logger in ("httpx", "httpx2", "httpcore", "httpcore2", "anthropic", "google.genai", "google_genai"):
+        logging.getLogger(sdk_logger).setLevel(logging.WARNING)

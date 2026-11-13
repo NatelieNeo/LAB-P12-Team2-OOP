@@ -28,6 +28,14 @@ class AIProvider(ABC):
     def generate(self, prompt: str) -> str:
         """Return the model's raw text. Raise AIConnectionError if it cannot be reached."""
 
+    def generate_with_timeout(self, prompt: str, timeout: float) -> str:
+        """Allow adapters to bound a call by the remaining collection budget.
+
+        Existing injected/offline providers retain their generate() interface.
+        Network adapters override this method to apply the SDK timeout.
+        """
+        return self.generate(prompt)
+
 
 class GeminiProvider(AIProvider):
     """Talks to Google Gemini. The API key is private and read from the environment."""
@@ -46,7 +54,7 @@ class GeminiProvider(AIProvider):
     def name(self) -> str:
         return f"gemini:{self._model}"
 
-    def _get_client(self):
+    def _get_client(self, timeout: Optional[float] = None):
         if not self.__api_key:
             raise AIConnectionError("GEMINI_API_KEY was not found. Add it to your .env file.", retryable=False)
         with self._client_lock:
@@ -58,10 +66,15 @@ class GeminiProvider(AIProvider):
                 raise AIConnectionError("Install google-genai to use Gemini.", retryable=False) from None
             # A fresh client belongs to this call/thread and is closed in generate().
             return genai.Client(api_key=self.__api_key, http_options={
-                "timeout": int(self._timeout * 1000), "retry_options": {"attempts": 1}})
+                "timeout": max(1, int((timeout if timeout is not None else self._timeout) * 1000)),
+                "retry_options": {"attempts": 1}})
 
     def generate(self, prompt: str) -> str:
-        client = self._get_client()
+        return self.generate_with_timeout(prompt, self._timeout)
+
+    def generate_with_timeout(self, prompt: str, timeout: float) -> str:
+        """Make one request with an isolated client and a bounded network timeout."""
+        client = self._get_client(min(timeout, self._timeout))
         from google.genai import errors
         import httpx2
         try:
@@ -90,7 +103,7 @@ class ClaudeProvider(AIProvider):
         self.__api_key = api_key if api_key is not None else os.getenv("ANTHROPIC_API_KEY")
         self._model = model or config.get_claude_model()
         self._client = client
-        self._timeout = timeout if timeout is not None else config.get_ai_timeout()
+        self._timeout = timeout if timeout is not None else config.get_claude_timeout()
 
     @property
     def name(self) -> str:
@@ -98,6 +111,10 @@ class ClaudeProvider(AIProvider):
 
     def generate(self, prompt: str) -> str:
         """Make one SDK request; AIManager owns the bounded retry policy."""
+        return self.generate_with_timeout(prompt, self._timeout)
+
+    def generate_with_timeout(self, prompt: str, timeout: float) -> str:
+        """Apply both the provider timeout and the remaining collection budget."""
         if not self.__api_key:
             raise AIConnectionError("ANTHROPIC_API_KEY was not found. Configure your environment.",
                                     retryable=False)
@@ -105,20 +122,24 @@ class ClaudeProvider(AIProvider):
             import anthropic
         except ImportError:
             raise AIConnectionError("Install anthropic to use Claude.", retryable=False) from None
+        timeout = min(timeout, self._timeout)
         client = self._client or anthropic.Anthropic(
-            api_key=self.__api_key, timeout=self._timeout, max_retries=0)
+            api_key=self.__api_key, timeout=timeout, max_retries=0)
         try:
             response = client.messages.create(
-                model=self._model, max_tokens=config.get_max_output_tokens(),
+                model=self._model, max_tokens=config.get_claude_max_output_tokens(),
                 messages=[{"role": "user", "content": prompt}],
-                system="Return only the JSON object requested by the user. Do not use Markdown.")
+                system="Return only the JSON object requested by the user. Do not use Markdown.",
+                timeout=timeout)
             if response.stop_reason == "max_tokens":
-                raise AIResponseError("Claude reached the output-token limit; increase AI_MAX_OUTPUT_TOKENS.")
+                raise AIResponseError("Claude reached the output-token limit; increase CLAUDE_MAX_OUTPUT_TOKENS.")
             return "".join(block.text for block in response.content if block.type == "text")
         except anthropic.APIError as error:
             status = getattr(error, "status_code", None)
+            transport = (f", transport {type(error.__cause__).__name__}"
+                         if error.__cause__ is not None else "")
             raise AIConnectionError(
-                f"Claude request failed ({type(error).__name__}, status {status or 'network'}).",
+                f"Claude request failed ({type(error).__name__}, status {status or 'network'}{transport}).",
                 retryable=status is None or status in (408, 409, 429) or status >= 500) from None
         finally:
             if self._client is None:
@@ -394,15 +415,23 @@ class AIManager:
         for attempt in range(1, self._max_retries + 1):
             if deadline is not None and time.perf_counter() >= deadline:
                 raise AIConnectionError("AI collection deadline reached.")
-            logger.info("Calling the AI provider - attempt %s/%s", attempt, self._max_retries)
+            logger.info("[%s] Calling the AI provider - attempt %s/%s",
+                        self._provider.name, attempt, self._max_retries)
             try:
-                text = self._provider.generate(prompt)
+                if deadline is None:
+                    text = self._provider.generate(prompt)
+                else:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        raise AIConnectionError("AI collection deadline reached.")
+                    text = self._provider.generate_with_timeout(prompt, remaining)
                 candidates = self._handler.parse_response(text)
                 logger.info("AI response successfully validated.")
                 return candidates
             except AIConnectionError as error:
                 last_error = error
-                logger.error("AI connection problem on attempt %s: %s", attempt, error)
+                logger.error("[%s] AI connection problem on attempt %s: %s",
+                             self._provider.name, attempt, error)
                 if not error.retryable:
                     raise
             except AIResponseError as error:
@@ -426,29 +455,66 @@ class MultiAIRecommendationManager:
 
     def __init__(self, providers: Sequence[AIProvider], handler: Optional[AIHandlerManager] = None,
                  prompt_builder: Optional[PromptBuilder] = None, timeout: Optional[float] = None,
-                 max_retries: int = MAX_RETRIES, retry_delay: float = RETRY_DELAY_SECONDS):
+                 max_retries: int = MAX_RETRIES, retry_delay: float = RETRY_DELAY_SECONDS,
+                 fallback_provider: Optional[AIProvider] = None, fallback_for: Optional[str] = None,
+                 fallback_timeout: Optional[float] = None):
         if len(providers) != 2 or len({p.name for p in providers}) != 2:
             raise ValueError("Multi-AI requires exactly two distinctly named providers.")
         self._providers = tuple(providers)
         self._handler = handler or AIHandlerManager()
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._timeout = timeout if timeout is not None else config.get_ai_total_timeout()
-        if not math.isfinite(self._timeout) or self._timeout <= 0 or max_retries < 1:
+        if (not math.isfinite(self._timeout) or self._timeout <= 0 or max_retries < 1
+                or not math.isfinite(retry_delay) or retry_delay < 0):
             raise ValueError("Timeout and maximum attempts must be positive.")
         self._max_retries = max_retries
         self._retry_delay = retry_delay
+        if (fallback_provider is None) != (fallback_for is None):
+            raise ValueError("Specify both the fallback provider and the provider it replaces.")
+        if fallback_for is not None and fallback_for not in {p.name for p in providers}:
+            raise ValueError("The replaced provider must be one of the two primary providers.")
+        self._fallback_provider = fallback_provider
+        self._fallback_for = fallback_for
+        budget = fallback_timeout if fallback_timeout is not None else config.get_ai_timeout()
+        if not math.isfinite(budget) or budget <= 0:
+            raise ValueError("Fallback timeout must be positive and finite.")
+        # Always leave a window for the backup, even with a short custom deadline.
+        self._fallback_timeout = min(budget, self._timeout / 2)
 
     def _ask(self, provider: AIProvider, prompt: str, deadline: float) -> AIResponseSet:
-        started = time.perf_counter()
-        logger.info("[%s] Thread started at %.6f", provider.name, started)
+        """Reuse the failed worker slot; never start a third simultaneous request."""
+        fallback = self._fallback_provider if provider.name == self._fallback_for else None
+        primary_deadline = deadline - self._fallback_timeout if fallback is not None else deadline
         try:
-            candidates = AIManager(provider, handler=self._handler, max_retries=self._max_retries,
+            return self._run_provider(provider, prompt, primary_deadline, self._max_retries)
+        except (AIConnectionError, AIResponseError) as error:
+            if fallback is None or time.perf_counter() >= deadline:
+                raise
+            label = f"{fallback.name} [backup for {provider.name}]"
+            logger.warning("[MultiAI] %s exhausted its attempts, failed permanently, or reached its "
+                           "retry deadline; starting %s in the same worker slot", provider.name, label)
+            try:
+                # A single backup attempt avoids multiplying calls and fits the reserved budget.
+                return self._run_provider(fallback, prompt, deadline, 1, label=label)
+            except (AIConnectionError, AIResponseError) as backup_error:
+                if isinstance(error, AIResponseError) and isinstance(backup_error, AIResponseError):
+                    raise AIResponseError("The provider and its backup both returned invalid responses.") from None
+                raise AllProvidersFailedError("The provider and its backup both failed.",
+                                              {provider.name: error, label: backup_error}) from None
+
+    def _run_provider(self, provider: AIProvider, prompt: str, deadline: float,
+                      max_retries: int, label: Optional[str] = None) -> AIResponseSet:
+        label = label or provider.name
+        started = time.perf_counter()
+        logger.info("[%s] Thread started at %.6f", label, started)
+        try:
+            candidates = AIManager(provider, handler=self._handler, max_retries=max_retries,
                                    retry_delay=self._retry_delay)._request(prompt, deadline)
-            return AIResponseSet(provider.name, tuple(candidates), started, time.perf_counter())
+            return AIResponseSet(label, tuple(candidates), started, time.perf_counter())
         finally:
             completed = time.perf_counter()
             logger.info("[%s] Thread completed at %.6f (%.3f seconds)",
-                        provider.name, completed, completed - started)
+                        label, completed, completed - started)
 
     def get_response_sets(self, request: MealPlanRequest, targets: NutritionTargets) -> List[AIResponseSet]:
         """Submit both calls before waiting and retain all valid completed answers."""

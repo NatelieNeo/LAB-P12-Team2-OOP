@@ -5,6 +5,7 @@ and exposed through read-only properties, so other classes cannot put an
 object into an inconsistent state by assigning to its fields directly.
 """
 from dataclasses import dataclass
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -31,6 +32,29 @@ class ResponseSelection:
 class IngredientParser:
     """Reads the AI's ingredient entries, each a plain string or an
     ``{"item": ..., "quantity": ..., "unit": ...}`` object."""
+
+    MEASUREMENT_UNITS = {
+        "g", "kg", "mg", "gram", "kilogram", "ml", "l", "litre", "liter",
+        "tsp", "tbsp", "teaspoon", "tablespoon", "cup", "slice", "piece", "clove",
+    }
+
+    @classmethod
+    def without_measurement(cls, label: str) -> str:
+        """Format a shopping label as a name while leaving stored recipe labels intact."""
+        text = str(label).strip()
+        number = r"(?:(?:\d+(?:\.\d+)?|\.\d+)(?:\s*/\s*\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])"
+        amount = rf"{number}(?:\s*[-–]\s*{number}|\s*{number})?"
+        units = "|".join(sorted(cls.MEASUREMENT_UNITS, key=len, reverse=True))
+        measurement = rf"{amount}(?:\s*(?:{units})s?\b\.?)?"
+        # AI strings and saved recipe labels can put quantities in brackets
+        # before or after the name. Preserve non-measurement notes in brackets.
+        name = re.sub(rf"(?:\(\s*{measurement}\s*\)|\[\s*{measurement}\s*\])", "", text,
+                      flags=re.IGNORECASE)
+        name = re.sub(rf"^\s*{amount}\s*(?:(?:{units})s?\b\.?\s*)?(?:of\s+)?", "", name,
+                      flags=re.IGNORECASE)
+        name = re.sub(rf"(?:\s*[-,:–]\s*|\s+){amount}\s*(?:{units})s?\b\.?\s*$", "", name,
+                      flags=re.IGNORECASE)
+        return name.strip() or text
 
     @staticmethod
     def names(ingredients: Optional[List[Any]]) -> List[str]:

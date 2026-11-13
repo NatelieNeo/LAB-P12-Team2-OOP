@@ -3,14 +3,16 @@ import copy
 import json
 import logging
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 import config
+from tests.helpers import FakeProvider, response_data
 from manager.ai_handler_manager import AIHandlerManager
-from manager.ai_manager import (AIManager, AIProvider, ClaudeProvider, GeminiProvider,
+from manager.ai_manager import (AIManager, ClaudeProvider, GeminiProvider,
                                 MultiAIRecommendationManager)
 from manager.controller import AppFactory, CaloraController
 from manager.data_manager import SqliteDataManager
@@ -27,52 +29,8 @@ def request_data():
     return MealPlanRequest(profile, "rice", "both", ["rice"], 15)
 
 
-def response_data(request, calorie_factor=1.0, cost=3.0, prefix="Rice"):
-    targets = NutritionCalculator().targets(request.profile)
-    recommendations = []
-    for i, slot in enumerate(("breakfast",) * 3 + ("lunch",) * 4 + ("dinner",) * 3):
-        recommendations.append({
-            "meal_type": slot, "meal_name": f"{prefix} {chr(65 + i)}", "meal_source_type": "home_cooked",
-            "calories": targets.per_meal_calories * calorie_factor,
-            **targets.per_meal_macros, "estimated_cost": cost, "portion_size": "1 serving",
-            "pantry_ingredients_used": ["rice"],
-            "ingredients": [{"item": "rice", "quantity": 100, "unit": "g"}],
-            "recipe_steps": ["Cook rice for 15 minutes."]})
-    return {"estimated_nutrition_targets": {
-        "calorie_target": targets.daily_calories, "protein_target_g": targets.daily_macros["protein_g"],
-        "carb_target_g": targets.daily_macros["carbs_g"], "fat_target_g": targets.daily_macros["fat_g"]},
-        "recommendations": recommendations}
-
-
 def parsed_set(name, data):
     return AIResponseSet(name, tuple(AIHandlerManager().parse_response(json.dumps(data))), 0, 1)
-
-
-class FakeProvider(AIProvider):
-    def __init__(self, name, *outcomes, barrier=None, gate=None):
-        self._name, self.outcomes = name, outcomes
-        self.barrier, self.gate = barrier, gate
-        self.calls, self.prompts, self.threads = 0, [], []
-        self.started = threading.Event()
-
-    @property
-    def name(self):
-        return self._name
-
-    def generate(self, prompt):
-        index = min(self.calls, len(self.outcomes) - 1)
-        self.calls += 1
-        self.prompts.append(prompt)
-        self.threads.append(threading.current_thread().name)
-        self.started.set()
-        if self.barrier:
-            self.barrier.wait(timeout=3)
-        if self.gate and not self.gate.wait(timeout=3):
-            raise RuntimeError("Test gate was not released")
-        result = self.outcomes[index]
-        if isinstance(result, Exception):
-            raise result
-        return result
 
 
 def collect(providers, request, **kwargs):
@@ -180,6 +138,7 @@ def test_claude_sdk_extracts_text_blocks_without_thinking_blocks(request_data):
     assert provider.generate("shared prompt") == text
     kwargs = client.messages.create.call_args.kwargs
     assert kwargs["model"] == "configured-claude"
+    assert kwargs["max_tokens"] == config.get_claude_max_output_tokens()
     assert kwargs["messages"] == [{"role": "user", "content": "shared prompt"}]
     assert len(AIHandlerManager().parse_response(text)) == 10
 
@@ -470,3 +429,238 @@ def test_gemini_only_workflow_still_builds_plan(request_data, tmp_path):
         assert controller.create_meal_plan(request_data).is_complete
     finally:
         jobs.shutdown()
+
+
+def test_three_claude_timeouts_start_gemini_backup_in_the_same_worker(request_data, caplog):
+    barrier = threading.Barrier(2)
+    text = json.dumps(response_data(request_data))
+    primary = FakeProvider("Gemini", text, barrier=barrier)
+    claude = FakeProvider("Claude", AIConnectionError("APITimeoutError"))
+    backup = FakeProvider("Gemini", text)
+    # Only the first attempt joins the barrier; retries must not replay Gemini.
+    original_generate = claude.generate
+
+    def first_attempt_overlap(prompt):
+        if claude.calls == 0:
+            barrier.wait(timeout=5)
+        return original_generate(prompt)
+
+    claude.generate = first_attempt_overlap
+    with caplog.at_level(logging.INFO):
+        results = collect([primary, claude], request_data,
+                          fallback_provider=backup, fallback_for="Claude")
+    assert primary.calls == 1 and claude.calls == 3 and backup.calls == 1
+    assert {result.provider for result in results} == {"Gemini", "Gemini [backup for Claude]"}
+    assert primary.prompts == backup.prompts == claude.prompts[:1]
+    assert len(set(claude.threads + backup.threads)) == 1
+    assert claude.threads[0] != primary.threads[0]
+    assert "same worker slot" in caplog.text
+
+
+def test_backup_overlaps_original_gemini_when_it_is_still_running(request_data):
+    barrier = threading.Barrier(2)
+    text = json.dumps(response_data(request_data))
+    primary = FakeProvider("Gemini", text, barrier=barrier)
+    backup = FakeProvider("Gemini", text, barrier=barrier)
+    claude = FakeProvider("Claude", AIConnectionError("timeout"))
+    results = collect([primary, claude], request_data, fallback_provider=backup, fallback_for="Claude")
+    assert claude.calls == 3 and primary.calls == backup.calls == 1
+    assert primary.threads[0] != backup.threads[0]
+    assert max(result.started_at for result in results) < min(result.completed_at for result in results)
+
+
+@pytest.mark.parametrize("attempt", [1, 2, 3])
+def test_claude_success_within_three_attempts_does_not_start_backup(request_data, attempt):
+    text = json.dumps(response_data(request_data))
+    claude = FakeProvider("Claude", *([AIConnectionError("timeout")] * (attempt - 1)), text)
+    backup = FakeProvider("Gemini", text)
+    results = collect([FakeProvider("Gemini", text), claude], request_data,
+                      fallback_provider=backup, fallback_for="Claude")
+    assert {result.provider for result in results} == {"Gemini", "Claude"}
+    assert claude.calls == attempt and backup.calls == 0
+
+
+@pytest.mark.parametrize("failure", [AIConnectionError("auth", retryable=False), "invalid JSON"])
+def test_claude_auth_or_invalid_json_can_use_backup(request_data, failure):
+    text = json.dumps(response_data(request_data))
+    claude = FakeProvider("Claude", failure)
+    backup = FakeProvider("Gemini", text)
+    results = collect([FakeProvider("Gemini", text), claude], request_data,
+                      fallback_provider=backup, fallback_for="Claude")
+    assert claude.calls == (1 if isinstance(failure, AIConnectionError) else 3)
+    assert backup.calls == 1
+    assert len(results) == 2
+
+
+def test_failed_backup_preserves_original_gemini_without_repeating_it(request_data):
+    text = json.dumps(response_data(request_data))
+    primary = FakeProvider("Gemini", text)
+    backup = FakeProvider("Gemini", AIConnectionError("timeout"))
+    results = collect([primary, FakeProvider("Claude", AIConnectionError("timeout"))], request_data,
+                      fallback_provider=backup, fallback_for="Claude")
+    assert [result.provider for result in results] == ["Gemini"]
+    assert primary.calls == backup.calls == 1
+
+
+def test_backup_can_win_when_both_original_providers_fail(request_data):
+    backup = FakeProvider("Gemini", json.dumps(response_data(request_data)))
+    results = collect([FakeProvider("Gemini", AIConnectionError("timeout")),
+                       FakeProvider("Claude", AIConnectionError("timeout"))], request_data,
+                      fallback_provider=backup, fallback_for="Claude")
+    selection = LogicManager().select_response_sets(results, request_data)
+    assert selection.response.provider == "Gemini [backup for Claude]"
+    assert selection.plan.is_complete
+
+
+def test_backup_is_compared_by_quality_instead_of_automatically_selected(request_data):
+    primary = FakeProvider("Gemini", json.dumps(response_data(request_data)))
+    backup = FakeProvider("Gemini", json.dumps(response_data(request_data, calorie_factor=0.3)))
+    results = collect([primary, FakeProvider("Claude", AIConnectionError("timeout"))], request_data,
+                      fallback_provider=backup, fallback_for="Claude")
+    assert LogicManager().select_response_sets(results, request_data).response.provider == "Gemini"
+
+
+def test_all_primaries_and_backup_failing_is_controlled_and_bounded(request_data):
+    primary, claude, backup = [FakeProvider(name, AIConnectionError("timeout"))
+                               for name in ("Gemini", "Claude", "Gemini")]
+    with pytest.raises(AllProvidersFailedError) as caught:
+        collect([primary, claude], request_data, fallback_provider=backup, fallback_for="Claude")
+    assert primary.calls == claude.calls == 3 and backup.calls == 1
+    assert isinstance(caught.value.failures["Claude"], AllProvidersFailedError)
+    assert "Gemini [backup for Claude]" in caught.value.failures["Claude"].failures
+
+
+def test_invalid_primaries_and_invalid_backup_preserve_response_error(request_data):
+    with pytest.raises(AIResponseError):
+        collect([FakeProvider("Gemini", "{}"), FakeProvider("Claude", "{}")], request_data,
+                fallback_provider=FakeProvider("Gemini", "{}"), fallback_for="Claude")
+
+
+def test_backup_uses_reserved_budget_and_requests_receive_remaining_time(request_data, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(time, "perf_counter", lambda: clock[0])
+    budgets = []
+    text = json.dumps(response_data(request_data))
+
+    class BudgetProvider(FakeProvider):
+        def generate_with_timeout(self, prompt, timeout):
+            budgets.append((self.name, timeout))
+            clock[0] += timeout
+            return self.generate(prompt)
+
+    claude = BudgetProvider("Claude", AIConnectionError("timeout"))
+    backup = BudgetProvider("Gemini", text)
+    manager = MultiAIRecommendationManager([FakeProvider("primary", text), claude], timeout=10,
+                                           retry_delay=0, fallback_provider=backup,
+                                           fallback_for="Claude", fallback_timeout=2)
+    result = manager._ask(claude, "same prompt", deadline=110)
+    assert budgets == [("Claude", 8), ("Gemini", 2)]
+    assert result.provider == "Gemini [backup for Claude]"
+    assert claude.calls == backup.calls == 1  # The deadline takes precedence over three attempts.
+
+
+def test_backup_never_overlaps_the_claude_call_it_replaces(request_data):
+    from concurrent.futures import ThreadPoolExecutor
+    gate = threading.Event()
+    text = json.dumps(response_data(request_data))
+    claude = FakeProvider("Claude", AIConnectionError("auth", retryable=False), gate=gate)
+    backup = FakeProvider("Gemini", text)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(collect, [FakeProvider("Gemini", text), claude], request_data,
+                                 fallback_provider=backup, fallback_for="Claude")
+        try:
+            assert claude.started.wait(2)
+            assert not backup.started.is_set()
+            gate.set()
+            assert len(future.result(timeout=3)) == 2
+        finally:
+            gate.set()
+
+
+def test_late_claude_failure_does_not_launch_backup_after_collection_deadline(request_data):
+    gate, finished = threading.Event(), threading.Event()
+    text = json.dumps(response_data(request_data))
+    claude = FakeProvider("Claude", AIConnectionError("timeout"), gate=gate)
+    backup = FakeProvider("Gemini", text)
+
+    class TrackingManager(MultiAIRecommendationManager):
+        def _ask(self, provider, prompt, deadline):
+            try:
+                return super()._ask(provider, prompt, deadline)
+            finally:
+                if provider is claude:
+                    finished.set()
+
+    manager = TrackingManager([FakeProvider("Gemini", text), claude], timeout=0.1,
+                              retry_delay=0, fallback_provider=backup, fallback_for="Claude")
+    try:
+        results = manager.get_response_sets(request_data, NutritionCalculator().targets(request_data.profile))
+        assert [result.provider for result in results] == ["Gemini"]
+        assert claude.started.is_set() and not finished.is_set()
+        assert backup.calls == 0
+    finally:
+        gate.set()
+        assert finished.wait(3)
+    assert backup.calls == 0
+
+
+def test_claude_timeout_is_sanitised_and_retryable():
+    import anthropic
+    import httpx2
+    client = Mock()
+    client.messages.create.side_effect = anthropic.APITimeoutError(
+        request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+    with pytest.raises(AIConnectionError, match="APITimeoutError") as caught:
+        ClaudeProvider(api_key="fake", client=client).generate("prompt")
+    assert caught.value.retryable
+
+
+def test_network_adapters_cap_timeout_by_remaining_budget(monkeypatch):
+    import anthropic
+    from google import genai
+    google_client, claude_client = Mock(), Mock()
+    google_client.models.generate_content.return_value.text = "{}"
+    claude_client.messages.create.return_value = SimpleNamespace(stop_reason="end_turn", content=[])
+    google_factory, claude_factory = Mock(return_value=google_client), Mock(return_value=claude_client)
+    monkeypatch.setattr(genai, "Client", google_factory)
+    monkeypatch.setattr(anthropic, "Anthropic", claude_factory)
+    GeminiProvider(api_key="fake", timeout=90).generate_with_timeout("prompt", 5)
+    ClaudeProvider(api_key="fake", timeout=120).generate_with_timeout("prompt", 5)
+    assert google_factory.call_args.kwargs["http_options"]["timeout"] == 5000
+    assert claude_factory.call_args.kwargs["timeout"] == 5
+    assert claude_client.messages.create.call_args.kwargs["timeout"] == 5
+
+
+def test_factory_backup_and_claude_timeout_settings_are_configurable(monkeypatch):
+    monkeypatch.setenv("AI_MODE", "multi")
+    monkeypatch.setenv("CLAUDE_GEMINI_BACKUP", "1")
+    monkeypatch.setenv("CLAUDE_REQUEST_TIMEOUT_SECONDS", "150")
+    monkeypatch.setenv("GEMINI_BACKUP_MODEL", "configured-backup")
+    manager = AppFactory.build_ai_manager()
+    assert manager._providers[1]._timeout == 150
+    assert manager._fallback_for == manager._providers[1].name
+    assert manager._fallback_provider.name == "gemini:configured-backup"
+    assert manager._fallback_provider is not manager._providers[0]
+    monkeypatch.setenv("CLAUDE_GEMINI_BACKUP", "0")
+    assert AppFactory.build_ai_manager()._fallback_provider is None
+
+
+def test_default_backup_reuses_current_gemini_model_not_the_legacy_race_model(monkeypatch):
+    monkeypatch.delenv("GEMINI_BACKUP_MODEL", raising=False)
+    monkeypatch.setenv("GEMINI_MODEL", "current-model")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "legacy-model")
+    assert config.get_gemini_backup_model() == "current-model"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "invalid", "1.5"])
+def test_invalid_claude_output_budget_is_controlled(monkeypatch, value):
+    monkeypatch.setenv("CLAUDE_MAX_OUTPUT_TOKENS", value)
+    with pytest.raises(InvalidInputError):
+        config.get_claude_max_output_tokens()
+
+
+def test_claude_output_budget_is_independent_of_gemini(monkeypatch):
+    monkeypatch.setenv("AI_MAX_OUTPUT_TOKENS", "8192")
+    monkeypatch.setenv("CLAUDE_MAX_OUTPUT_TOKENS", "16384")
+    assert config.get_max_output_tokens() == 8192
+    assert config.get_claude_max_output_tokens() == 16384

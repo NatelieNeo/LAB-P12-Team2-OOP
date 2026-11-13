@@ -32,49 +32,7 @@ from manager.logic_manager import LogicManager, NutritionCalculator  # noqa: E40
 from manager.models import MealPlanRequest, UserProfile  # noqa: E402
 
 
-# ---- sample data ----------------------------------------------------------------------
-def make_meal(slot, name, calories, cost, source="home_cooked"):
-    """One recommendation with exactly the fields the prompt asks Gemini for."""
-    home_cooked = source == "home_cooked"
-    return {
-        "meal_type": slot, "meal_name": name, "meal_source_type": source,
-        "calories": calories, "protein_g": 25, "carbs_g": 40, "fat_g": 15,
-        "estimated_cost": cost, "portion_size": "1 serving",
-        "pantry_ingredients_used": ["eggs"] if home_cooked else [],
-        "ingredients": ["2 eggs", "1 cup cooked rice"] if home_cooked else ["rice", "chicken"],
-        "recipe_steps": ["Cook everything thoroughly.", "Serve."] if home_cooked else [],
-    }
-
-
-def make_response():
-    """Ten options, in the JSON structure AIHandlerManager expects."""
-    return {
-        "estimated_nutrition_targets": {
-            "calorie_target": 1650, "protein_target_g": 90, "carb_target_g": 185, "fat_target_g": 55},
-        "recommendations": [
-            make_meal("breakfast", "Eggs on Toast", 400, 2.5),
-            make_meal("breakfast", "Boiled Eggs and Toast", 250, 1.2),
-            make_meal("breakfast", "Kaya Toast Set", 350, 3.5, source="eat_out"),
-            make_meal("lunch", "Chicken Rice", 500, 4.5, source="eat_out"),
-            make_meal("lunch", "Garlic Chicken Pasta", 480, 3.0),
-            make_meal("lunch", "Sliced Fish Soup", 380, 5.5, source="eat_out"),
-            make_meal("lunch", "Vegetable Rice Bowl", 650, 4.0),
-            make_meal("dinner", "Chicken and Rice Bowl", 520, 3.5),
-            make_meal("dinner", "Yong Tau Foo", 420, 6.0, source="eat_out"),
-            make_meal("dinner", "Salmon Rice Bowl", 600, 7.0),
-        ],
-    }
-
-
-def make_profile():
-    return UserProfile(username="nisha", name="Nisha", age=21, gender="female", weight_kg=52,
-                       height_cm=165, activity_level="sedentary", goal="maintain",
-                       dietary_restrictions=[])
-
-
-def make_request(profile):
-    return MealPlanRequest(profile, meal_preference="rice dishes", meal_source="both",
-                           pantry_ingredients=["eggs", "chicken", "rice"], daily_budget=10.5)
+from tests.helpers import FakeProvider, make_profile, make_request, sample_response as make_response
 
 
 def ask_ai_manager(manager):
@@ -84,37 +42,6 @@ def ask_ai_manager(manager):
 
 
 # ---- fakes ----------------------------------------------------------------------------
-class FakeProvider(AIProvider):
-    """A fake AI model. It plays back one outcome per call: a string is returned,
-    an Exception is raised (the last outcome repeats).
-    If a gate is given, the call blocks until the test opens it."""
-
-    def __init__(self, name, *outcomes, gate=None):
-        self._name = name
-        self._outcomes = list(outcomes)
-        self._gate = gate
-        self._lock = threading.Lock()
-        self.calls = 0
-        self.prompts = []
-        self.started = threading.Event()
-
-    @property
-    def name(self):
-        return self._name
-
-    def generate(self, prompt):
-        with self._lock:
-            outcome = self._outcomes[min(self.calls, len(self._outcomes) - 1)]
-            self.calls += 1
-            self.prompts.append(prompt)
-        self.started.set()
-        if self._gate is not None:
-            self._gate.wait(10)
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
-
-
 class MeetingProvider(AIProvider):
     """Answers only once another thread is inside generate() at the same time.
     If the providers were called one after another, the barrier would break."""
