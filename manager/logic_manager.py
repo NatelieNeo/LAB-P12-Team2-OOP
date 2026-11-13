@@ -4,11 +4,11 @@ from itertools import product
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from manager.models import (
     AIResponseSet, ResponseSelection,
-    MealCandidate, MealPlan, MealPlanRequest, NutritionTargets,
+    IngredientParser, MealCandidate, MealPlan, MealPlanRequest, NutritionTargets,
     PlannedMeal, Recipe, ShoppingList, UserProfile,
 )
 import config
@@ -336,18 +336,59 @@ class ShoppingListBuilder:
     """NEW FEATURE: works out what to buy for a plan's home-cooked meals,
     leaving out anything the user's pantry already covers."""
 
+    _PREPARATION = {"fresh", "frozen", "chopped", "diced", "sliced", "minced", "grated",
+                    "peeled", "boneless", "skinless", "raw", "cooked", "uncooked"}
+    _QUALIFIERS = {"breast", "thigh", "fillet", "drumstick", "clove", "whole", "wholemeal",
+                   "wholewheat", "brown", "white", "basmati", "jasmine", "long", "short",
+                   "grain", "large", "medium", "small", "vegetable", "cooking", "light", "dark"}
+    _PLURALS = {"tomatoes": "tomato", "potatoes": "potato", "leaves": "leaf"}
+    _ALIASES = {"green onion": "spring onion", "scallion": "spring onion", "soya sauce": "soy sauce"}
+
+    @classmethod
+    def _ingredient_words(cls, text: str) -> List[str]:
+        """Normalize spelling, simple plurals and serving labels, not quantities on hand."""
+        has_quantity = bool(re.match(r"^\s*(?:\d|\.\d|[¼½¾⅓⅔⅛⅜⅝⅞])", str(text)))
+        words = []
+        for word in re.findall(r"[^\W\d_]+", str(text).casefold()):
+            if word in cls._PLURALS:
+                word = cls._PLURALS[word]
+            elif word.endswith("ies"):
+                word = word[:-3] + "y"
+            elif len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us")):
+                word = word[:-1]
+            if word not in cls._PREPARATION:
+                words.append(word)
+        while has_quantity and len(words) > 1 and (words[0] in IngredientParser.MEASUREMENT_UNITS or words[0] == "of"):
+            words.pop(0)
+        return cls._ALIASES.get(" ".join(words), " ".join(words)).split()
+
+    @classmethod
+    def _matches(cls, required: List[str], available: List[str]) -> bool:
+        """Match whole ingredient names; rice must not match rice flour or vinegar."""
+        if not required or not available:
+            return False
+        shorter, longer = sorted((required, available), key=len)
+        for start in range(len(longer) - len(shorter) + 1):
+            if longer[start:start + len(shorter)] == shorter:
+                qualifiers = longer[:start] + longer[start + len(shorter):]
+                if all(word in cls._QUALIFIERS for word in qualifiers):
+                    return True
+        return False
+
     def build(self, plan: MealPlan, pantry: Sequence[str]) -> ShoppingList:
-        pantry_lower = [str(item).strip().lower() for item in pantry or [] if str(item).strip()]
+        pantry_words = [self._ingredient_words(item) for entry in pantry or []
+                        for item in re.split(r"[,;\n]+", str(entry)) if item.strip()]
         to_buy, in_pantry, seen = [], [], set()
         for meal in plan.meals.values():
             if meal.source_type != "home_cooked":
                 continue
             for label in meal.ingredient_labels:
-                key = label.lower()
+                words = self._ingredient_words(label)
+                key = label.casefold()
                 if key in seen:
                     continue
                 seen.add(key)
-                if any(item in key for item in pantry_lower):
+                if any(self._matches(words, available) for available in pantry_words):
                     in_pantry.append(label)
                 else:
                     to_buy.append(label)
@@ -449,6 +490,7 @@ class LogicManager:
 
     def build_recipes(self, plan: MealPlan) -> List[Recipe]:
         return self._recipes.build(plan)
+
     @staticmethod
     def _fit(actual: float, target: float) -> float:
         """1 at target, decreasing linearly to 0 at 100% relative error."""

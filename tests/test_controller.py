@@ -7,8 +7,9 @@ import pytest
 from manager.data_manager import SqliteDataManager
 from manager.exceptions import AIConnectionError, AIResponseError, NoSuitableMealsError
 from manager.job_manager import JobStatus
-from manager.models import MealPlan
-from tests.conftest import make_profile, make_request, meal
+from manager.logic_manager import ShoppingListBuilder
+from manager.models import IngredientParser, MealPlan, PlannedMeal
+from tests.helpers import make_profile, make_request, meal
 
 
 def test_create_meal_plan_saves_plan_and_preferences(controller_factory, response_text):
@@ -29,6 +30,49 @@ def test_shopping_list_comes_from_the_requests_pantry(controller_factory, respon
     request = make_request(profile)
     plan = controller.create_meal_plan(request)
     assert controller.get_shopping_list(plan, request).items == ["2 slices wholemeal bread"]
+
+
+@pytest.mark.parametrize("available,required", [
+    ("eggs", "egg"), ("egg", "2 large eggs"), ("RICE", "150 g cooked rice"),
+    ("200g rice", "rice"), ("chicken", "150 g skinless chicken breast"),
+    ("chicken breasts", {"item": "chicken breast", "quantity": 150, "unit": "g"}),
+    ("green onions", "spring onion"), ("scallions", "2 chopped green onions"),
+    ("soy sauce", "1 tbsp light soy sauce"), ("soya sauce", "soy sauce"),
+    ("garlic", "2 cloves garlic"), ("oil", "vegetable oil"), ("bread", "2 slices of wholemeal bread"),
+    ("potatoes", "potato"), ("tomatoes", "tomato"), ("米饭", "米饭"),
+])
+def test_shopping_list_excludes_normalized_pantry_ingredients(available, required):
+    plan = MealPlan(1650, 10)
+    plan.add_meal(PlannedMeal.from_dict("breakfast", {
+        "name": "Test meal", "source_type": "home_cooked", "pantry_ingredients_used": [required]}))
+    shopping = ShoppingListBuilder().build(plan, [available])
+    assert shopping.items == []
+    assert shopping.covered_by_pantry == IngredientParser.labels([required])
+
+
+@pytest.mark.parametrize("available,required", [
+    ("rice", "rice flour"), ("rice", "rice vinegar"), ("rice", "rice noodles"),
+    ("egg", "egg noodles"), ("milk", "almond milk"), ("oil", "sesame oil"),
+    ("white rice", "brown rice"), ("chicken", "chicken stock"), ("egg", "eggplant"),
+    ("flour", "gram flour"),
+])
+def test_shopping_list_does_not_confuse_distinct_ingredients(available, required):
+    plan = MealPlan(1650, 10)
+    plan.add_meal(PlannedMeal.from_dict("breakfast", {
+        "name": "Test meal", "source_type": "home_cooked", "pantry_ingredients_used": [required]}))
+    shopping = ShoppingListBuilder().build(plan, [available])
+    assert shopping.items == [required]
+    assert shopping.covered_by_pantry == []
+
+
+def test_shopping_list_handles_multiple_pantry_items_and_retains_missing_quantities():
+    ingredients = ["rice", "egg", "green onions", "150 g chicken breast", "200 g chicken breast"]
+    plan = MealPlan(1650, 10)
+    plan.add_meal(PlannedMeal.from_dict("breakfast", {
+        "name": "Test meal", "source_type": "home_cooked", "pantry_ingredients_used": ingredients}))
+    shopping = ShoppingListBuilder().build(plan, ["rice; eggs\nscallions"])
+    assert shopping.items == ["150 g chicken breast", "200 g chicken breast"]
+    assert shopping.covered_by_pantry == ["rice", "egg", "green onions"]
 
 
 def test_ai_failure_raises_and_saves_nothing(controller_factory):

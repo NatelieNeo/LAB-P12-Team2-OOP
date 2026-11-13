@@ -171,8 +171,6 @@ class SqliteDataManager(DataManager):
             with connection:
                 connection.executescript(
                     """
-                    PRAGMA foreign_keys = OFF;
-
                     CREATE TABLE IF NOT EXISTS users (
                         user_id         TEXT PRIMARY KEY,
                         username        TEXT NOT NULL UNIQUE,
@@ -416,6 +414,7 @@ class SqliteDataManager(DataManager):
                         (plan_id, slot),
                     )
                 for slot, meal in plan.meals.items():
+                    meal_data = meal.to_dict()
                     cursor = connection.execute(
                         "INSERT INTO meals (plan_id, slot, name, source_type, calorie_range, calorie_tag, "
                         "protein_tag, carbs_tag, fat_tag, cost_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -424,16 +423,16 @@ class SqliteDataManager(DataManager):
                             slot,
                             meal.name,
                             meal.source_type,
-                            meal.to_dict().get("calorie_range"),
+                            meal_data.get("calorie_range"),
                             meal.calorie_tag,
-                            meal.to_dict().get("protein_tag"),
-                            meal.to_dict().get("carbs_tag"),
-                            meal.to_dict().get("fat_tag"),
+                            meal_data.get("protein_tag"),
+                            meal_data.get("carbs_tag"),
+                            meal_data.get("fat_tag"),
                             meal.cost_tier,
                         ),
                     )
                     meal_id = cursor.lastrowid
-                    for ingredient in meal.ingredient_names:
+                    for ingredient in dict.fromkeys(meal.ingredient_labels):
                         connection.execute(
                             "INSERT INTO meal_ingredients (meal_id, ingredient) VALUES (?, ?)",
                             (meal_id, ingredient),
