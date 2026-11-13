@@ -1,33 +1,75 @@
-{% if result.recipes %}
-<h2>Recipes</h2>
-{% for recipe in result.recipes %}
-<details class="recipe">
-    <summary>{{ recipe.slot|capitalize }}: {{ recipe.name }}</summary>
-    <div class="accordion-content">
-        {% if recipe.portion_size %}<p class="detail"><strong>Serves:</strong> {{ recipe.portion_size }}</p>{% endif %}
-        {% if recipe.ingredients %}
-        <p class="detail"><strong>Ingredients:</strong></p>
-        <ul class="recipe-ingredients">
-            {% for item in recipe.ingredients %}<li>{{ item }}</li>{% endfor %}
-        </ul>
-        {% endif %}
-        {% if recipe.steps %}
-        <p class="detail"><strong>Steps:</strong></p>
-        <ol class="recipe-steps">
-            {% for step in recipe.steps %}<li>{{ step }}</li>{% endfor %}
-        </ol>
-        {% else %}
-        <p class="detail muted">No cooking instructions were saved for this meal.</p>
-        {% endif %}
-    </div>
-</details>
-{% endfor %}
-{% endif %}
 {% if result.missing_slots %}<p class="notice">Missing meals: {{ result.missing_slots|join(", ") }}</p>{% endif %}
-{% if result.ai_selection %}<p class="detail">Selected AI: {{ result.ai_selection.provider }} (suitability score {{ "%.2f"|format(result.ai_selection.score) }}/100)</p>{% endif %}
-<p class="detail muted">Nutrition and prices are AI estimates, not independently verified values.</p>
-<section class="summary"><div><strong>{{ result.total_calories }} kcal</strong>total calories</div><div><strong>{{ result.total_cost if result.total_cost is not none else "—" }}</strong>estimated cost</div><div><strong>{{ result.daily_calorie_target|round|int }} kcal</strong>daily target</div></section>
-<h2>Why this plan</h2><p>{{ result.explanation }}</p>
-<section class="meals">{% for slot, meal in result.meals.items() %}<article class="meal"><h3>{{ slot }}: {{ meal.name }} <span class="muted">({{ meal.source_type }})</span></h3><p class="detail"><strong>Calories:</strong> {{ meal.calorie_range }} - {{ meal.calorie_tag }}</p><p class="detail"><strong>Macros:</strong> Protein {{ meal.protein_tag }} / Carbs {{ meal.carbs_tag }} / Fat {{ meal.fat_tag }}</p>{% if meal.pantry_ingredients_used %}<p class="pantry"><strong>Ingredients required:</strong> {{ meal.pantry_ingredients_used|join(", ") }}</p>{% endif %}<p class="detail"><strong>Cost:</strong> {{ meal.cost_tier }}</p></article>{% endfor %}</section>
-{% if result.shopping_items %}<h2>Shopping list</h2><p class="detail">Ingredients to buy for your home-cooked meals:</p><ul class="shopping">{% for item in result.shopping_items %}<li>{{ item }}</li>{% endfor %}</ul>{% if result.shopping_covered %}<p class="detail muted">Already in your pantry: {{ result.shopping_covered|join(", ") }}</p>{% endif %}{% endif %}
+
+<section class="plan-card plan-overview" aria-label="Daily overview">
+    <h2>Daily overview</h2>
+    <dl class="plan-totals">
+        <div><dt>Total calories</dt><dd>{{ result.total_calories }} kcal</dd></div>
+        <div><dt>Estimated cost</dt><dd>{{ "SGD %.2f"|format(result.total_cost) if result.total_cost is not none else "—" }}</dd></div>
+        <div><dt>Daily target</dt><dd>{{ result.daily_calorie_target|round|int }} kcal</dd></div>
+    </dl>
+    <p class="plan-explanation">{{ result.explanation }}</p>
+    <p class="plan-meta">Nutrition and prices are AI estimates, not independently verified values.</p>
+</section>
+
+<section class="meals" aria-label="Daily meals">
+    {% for slot, meal in result.meals.items() %}
+    <article class="meal">
+        <header class="meal-header">
+            <div class="meal-labels">
+                <span class="meal-slot">{{ slot|capitalize }}</span>
+                <span class="meal-source">{{ meal.source_type|replace("_", " ")|capitalize }}</span>
+            </div>
+            <h3>{{ meal.name }}</h3>
+        </header>
+        <div class="meal-nutrition">
+            <p class="detail"><strong>Calories</strong><span>{{ meal.calorie_range }}</span><span class="meal-target">{{ meal.calorie_tag|replace("_", " ")|capitalize }}</span></p>
+            <dl class="meal-macros">
+                <div><dt>Protein</dt><dd>{{ meal.protein_tag }}</dd></div>
+                <div><dt>Carbs</dt><dd>{{ meal.carbs_tag }}</dd></div>
+                <div><dt>Fat</dt><dd>{{ meal.fat_tag }}</dd></div>
+            </dl>
+            <p class="detail meal-cost"><strong>Estimated cost</strong><span>{{ meal.cost_tier }}</span></p>
+        </div>
+        {% if meal.recipe %}
+        {% set recipe = meal.recipe %}
+        <details class="recipe">
+            <summary aria-label="View recipe for {{ meal.name }}"><span>View recipe</span><span class="recipe-chevron" aria-hidden="true">⌄</span></summary>
+            <div class="recipe-content">
+                {% if recipe.portion_size %}<p class="recipe-portion"><strong>Serves:</strong> {{ recipe.portion_size }}</p>{% endif %}
+                {% if recipe.ingredients %}
+                <h4>Ingredients</h4>
+                <ul class="recipe-ingredients">
+                    {% for item in recipe.ingredients %}<li>{{ item }}</li>{% endfor %}
+                </ul>
+                {% endif %}
+                <h4>Cooking steps</h4>
+                {% if recipe.steps %}
+                <ol class="recipe-steps">
+                    {% for step in recipe.steps %}<li>{{ step }}</li>{% endfor %}
+                </ol>
+                {% else %}
+                <p class="muted">No cooking instructions were saved for this meal.</p>
+                {% endif %}
+            </div>
+        </details>
+        {% endif %}
+    </article>
+    {% endfor %}
+</section>
+
+{% if result.shopping_available %}
+<section class="plan-card shopping-card" aria-label="Shopping list">
+    <h2>Shopping list</h2>
+    {% if result.recipes %}
+    <p class="section-intro">Only ingredients you still need to buy for your home-cooked meals.</p>
+    {% if result.shopping_items %}
+    <ul class="shopping">{% for item in result.shopping_items %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% else %}
+    <p class="shopping-empty">Nothing to buy — your pantry covers every ingredient.</p>
+    {% endif %}
+    {% else %}
+    <p class="shopping-empty">Nothing to buy — this plan contains eat-out meals only.</p>
+    {% endif %}
+</section>
+{% endif %}
 {% if result.disclaimer %}<p class="notice">{{ result.disclaimer }}</p>{% endif %}

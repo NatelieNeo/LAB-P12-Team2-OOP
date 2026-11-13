@@ -3,14 +3,12 @@ import json
 
 import pytest
 
-from main import CliApp
 from manager.data_manager import JsonDataManager, SqliteDataManager
 from manager.io_manager import IOManager
 from manager.logic_manager import LogicManager, MealTagger, NutritionCalculator, RecipeBuilder
 from manager.models import MealCandidate, MealPlan, PlannedMeal, Recipe
-from tests.conftest import eat_out, make_profile, make_request, meal, sample_response
-from tests.test_cli import NEW_USER, QuietSpinner, run_cli
-from tests.test_web import PLAN_FORM, sign_up, start_plan, wait_for_plan
+from tests.helpers import (NEW_USER, PLAN_FORM, eat_out, make_profile, make_request,
+                           meal, run_cli, sample_response, sign_up, start_plan, wait_for_plan)
 
 
 def planned(slot="breakfast", source="home_cooked", steps=("Boil the eggs.", "Toast the bread."), **kw):
@@ -213,7 +211,7 @@ def test_cli_shows_recipes_after_a_home_cooked_plan(controller_factory, response
 
 def test_cli_shows_no_recipes_when_eating_out(controller_factory, response_text):
     controller, _ = controller_factory(response_text)
-    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "out", "", "0", "", "5"])
+    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "out", "0", "", "5"])
     assert "=== Your Meal Plan ===" in out
     assert "Step-by-step recipes" not in out
 
@@ -236,7 +234,10 @@ def test_web_plan_page_lists_recipes_and_escapes_the_ai_text(web_with_recipes):
     job_id = start_plan(client)
     assert wait_for_plan(client, job_id) == "DONE"
     page = client.get(f"/plan/result/{job_id}").get_data(as_text=True)
-    assert "<h2>Recipes</h2>" in page and "recipe-steps" in page
+    assert '<details class="recipe">' in page and "recipe-steps" in page
+    assert "<h2>Recipes</h2>" not in page
+    assert page.index('<article class="meal">') < page.index('<details class="recipe">') < page.index('</article>')
+    assert '<details class="recipe" open' not in page
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script>alert(1)" not in page
     assert "Serve &amp; enjoy." in page
 
@@ -248,6 +249,7 @@ def test_web_history_keeps_the_recipes(web_with_recipes):
     wait_for_plan(client, job_id)
     history = client.get("/plans").get_data(as_text=True)
     assert "recipe-steps" in history and "Serve &amp; enjoy." in history
+    assert history.index('<article class="meal">') < history.index('<details class="recipe">') < history.index('</article>')
 
 
 def test_web_plan_without_home_cooked_meals_has_no_recipe_section(web_with_recipes):
@@ -256,4 +258,5 @@ def test_web_plan_without_home_cooked_meals_has_no_recipe_section(web_with_recip
     job_id = start_plan(client, {**PLAN_FORM, "meal_source": "out", "ingredients": ""})
     wait_for_plan(client, job_id)
     page = client.get(f"/plan/result/{job_id}").get_data(as_text=True)
-    assert "<h2>Recipes</h2>" not in page
+    assert '<details class="recipe">' not in page
+    assert "Nothing to buy — this plan contains eat-out meals only." in page
