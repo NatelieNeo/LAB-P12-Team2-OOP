@@ -91,7 +91,9 @@ class ParallelAIProvider(AIProvider):
                     f"{provider.name} did not answer within {self._timeout:g} seconds.")
                 logger.warning("%s timed out.", provider.name)
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            # Both submitted providers must be asked, even if a fast answer
+            # arrives before the second worker starts. Do not cancel that queue.
+            executor.shutdown(wait=False, cancel_futures=False)
 
         if all(isinstance(error, AIResponseError) for error in failures.values()):
             raise AIResponseError("No AI model returned a valid response: " + self._describe(failures))

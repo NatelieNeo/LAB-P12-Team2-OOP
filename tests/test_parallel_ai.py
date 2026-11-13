@@ -238,6 +238,9 @@ def test_last_winner_follows_the_latest_call(response_text, valid):
     parallel = ParallelAIProvider([primary, backup], validator=valid)
     parallel.generate("first")
     assert parallel.last_winner == "primary"
+    # A first-valid race returns before the losing provider finishes. Ensure
+    # the first call consumed its fake outcome before starting the next call.
+    assert backup.started.wait(2)
     parallel.generate("second")
     assert parallel.last_winner == "backup"
 
