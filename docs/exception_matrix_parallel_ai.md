@@ -1,5 +1,8 @@
 # Exception matrix: parallel AI (threading feature)
 
+> This matrix describes the legacy two-Gemini race. For Gemini + Claude multi
+> mode, see [the README's failure handling](../README.md#failure-handling-and-timing).
+
 | # | What goes wrong | Exception | Raised in | Handled in | What happens next |
 |---|---|---|---|---|---|
 | 1 | One model cannot be reached (network, quota, API error) | `AIConnectionError` | `GeminiProvider.generate` (worker thread) | `ParallelAIProvider.generate` | Recorded in `failures` and logged as a warning. The other model's answer is used, so the user notices nothing. |

@@ -1,5 +1,10 @@
 <!-- Threading (parallel AI) text for README.md, grouped by the README's numbered sections. Paste each part under its heading. -->
 
+> Historical notes for the retained two-Gemini first-valid race. The current
+> Gemini + Claude comparison feature and configuration are documented in
+> [the project README](../README.md). The new multi mode collects both answers
+> and scores them; it does not use first-response selection.
+
 ## 1. What changed in Part 2
 
 **Advanced feature: threading (parallel AI models).** `ParallelAIProvider` asks two Gemini models for a meal plan at the same time and uses the first valid answer. If one model is slow, unreachable or returns a badly formatted response, the other is the safety net, so the user waits less and sees fewer failures.
