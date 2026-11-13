@@ -1,0 +1,31 @@
+classDiagram
+direction TB
+class CaloraError {
+  <<exception>>
+}
+class InvalidInputError {
+  raised by UserInputValidator
+}
+class AIConnectionError {
+  +retryable : bool
+  raised by GeminiProvider
+}
+class AIResponseError {
+  raised by AIHandlerManager
+}
+class StorageError {
+  raised by SqliteDataManager
+}
+class AllProvidersFailedError {
+  +failures : dict
+  raised by ParallelAIProvider
+}
+class NoSuitableMealsError {
+  raised by CaloraController
+}
+CaloraError <|-- InvalidInputError
+CaloraError <|-- AIConnectionError
+CaloraError <|-- AIResponseError
+CaloraError <|-- StorageError
+CaloraError <|-- NoSuitableMealsError
+AIConnectionError <|-- AllProvidersFailedError

@@ -4,5 +4,7 @@
 .venv/
 .git/
 .pytest_cache/
+# Local pytest scratch directories may have restrictive Windows permissions.
+.test-tmp*/
 data/*.json
 data/*.db

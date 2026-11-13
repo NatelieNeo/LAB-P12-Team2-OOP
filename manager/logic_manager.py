@@ -1,11 +1,20 @@
 """Logic Manager: nutrition maths, safety/source rules, ranking and plan assembly."""
 from abc import ABC, abstractmethod
+from itertools import product
+import logging
+import re
+import time
 from typing import Any, Dict, List, Optional, Sequence
 
 from manager.models import (
+    AIResponseSet, ResponseSelection,
     MealCandidate, MealPlan, MealPlanRequest, NutritionTargets,
     PlannedMeal, Recipe, ShoppingList, UserProfile,
 )
+import config
+from manager.exceptions import NoSuitableMealsError
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
@@ -85,6 +94,11 @@ class DietarySafetyRule(MealRule):
     dropped as uncertain."""
 
     RESTRICTION_KEYWORDS = {
+        "vegetarian": ["chicken", "beef", "pork", "lamb", "mutton", "fish", "anchovy",
+                       "prawn", "shrimp", "crab", "lobster", "gelatin", "belacan"],
+        "vegan": ["chicken", "beef", "pork", "lamb", "mutton", "fish", "anchovy", "prawn",
+                  "shrimp", "crab", "lobster", "gelatin", "belacan", "egg", "milk", "cheese",
+                  "butter", "cream", "yogurt", "yoghurt", "ghee", "whey", "honey"],
         "peanut": ["peanut", "groundnut", "satay", "kacang"],
         "nuts": ["peanut", "almond", "cashew", "walnut", "hazelnut",
                  "pistachio", "pecan", "groundnut", "satay"],
@@ -102,7 +116,7 @@ class DietarySafetyRule(MealRule):
         "shellfish": ["laksa", "hokkien mee", "rojak", "har cheong"],
         "gluten": ["laksa", "mee goreng"],
     }
-    SAFE_EXCEPTIONS = ["coconut", "nutmeg", "butternut", "water chestnut", "peanut-free"]
+    SAFE_EXCEPTIONS = ["coconut", "nutmeg", "butternut", "water chestnut"]
 
     def __init__(self, keywords: Optional[Dict[str, List[str]]] = None,
                  risky_dishes: Optional[Dict[str, List[str]]] = None):
@@ -117,6 +131,8 @@ class DietarySafetyRule(MealRule):
     @staticmethod
     def _variants(restriction: str) -> List[str]:
         """"peanuts" should also catch "peanut oil"."""
+        if restriction == "nut":
+            return ["nut", "nuts"]
         singular = restriction[:-1] if restriction.endswith("s") and len(restriction) > 3 else restriction
         return [restriction] if singular == restriction else [restriction, singular]
 
@@ -407,6 +423,19 @@ class LogicManager:
         targets = self.calculate_targets(request.profile)
         grouped = self.group_by_slot(candidates)
         plan = MealPlan(targets.daily_calories, request.daily_budget)
+        if request.strict_budget and request.daily_budget is not None:
+            ranked_slots = [self.rank_slot(grouped[slot], targets, request) for slot in MealPlan.SLOTS]
+            feasible = [combo for combo in product(*ranked_slots)
+                        if all(c.estimated_cost is not None for c in combo)
+                        and round(sum(c.estimated_cost for c in combo), 2) <= request.daily_budget]
+            if not feasible:
+                return None
+            # Same criterion priority as rank_slot, aggregated over a whole day.
+            best = min(feasible, key=lambda combo: tuple(
+                sum(criterion.score(c, targets, request) for c in combo) for criterion in self._criteria))
+            for candidate in best:
+                plan.add_meal(self._tagger.annotate(candidate, targets))
+            return plan
         for slot in MealPlan.SLOTS:
             ranked = self.rank_slot(grouped[slot], targets, request)
             if ranked:
@@ -420,3 +449,94 @@ class LogicManager:
 
     def build_recipes(self, plan: MealPlan) -> List[Recipe]:
         return self._recipes.build(plan)
+    @staticmethod
+    def _fit(actual: float, target: float) -> float:
+        """1 at target, decreasing linearly to 0 at 100% relative error."""
+        return max(0.0, 1.0 - abs(actual - target) / max(abs(target), 1.0))
+
+    @staticmethod
+    def _dish_key(candidate: MealCandidate) -> str:
+        """Ignore casing, punctuation and word order to count obvious duplicates."""
+        return " ".join(sorted(set(re.findall(r"[a-z]+", candidate.meal_name.lower()))))
+
+    def score_response(self, response: AIResponseSet, request: MealPlanRequest) -> Optional[ResponseSelection]:
+        """Reject hard violations, then score the complete set without mixing providers.
+
+        Nutrition uses each candidate's *per-meal* target. Budget uses the three
+        selected meals together. Existing meal ranking determines that day's plan.
+        """
+        candidates = list(response.candidates)
+        if len(candidates) != config.RECOMMENDATION_COUNT:
+            return None
+        # A response with even one unsafe recommendation is ineligible, regardless
+        # of its other scores. No ingredient list means safety is unknown.
+        if any(not c.ingredient_names for c in candidates):
+            return None
+        if len(DietarySafetyRule().apply(candidates, request)) != len(candidates):
+            return None
+        if request.meal_source != "both" and any(c.source_type != request.meal_source for c in candidates):
+            return None
+        plan = self.build_meal_plan(candidates, request)
+        if plan is None or not plan.is_complete:
+            return None
+        targets = self.calculate_targets(request.profile)
+        macros = targets.per_meal_macros
+        count = len(candidates)
+        preference = PreferenceCriterion()
+        home = [c for c in candidates if c.source_type == "home_cooked"]
+        pantry = [p.strip().lower() for p in request.pantry_ingredients if p.strip()]
+        pantry_fit = [sum(any(p in name.lower() for p in pantry) for name in c.ingredient_names)
+                      / max(1, len(c.ingredient_names)) for c in home]
+        # Treat missing costs as unknown, never as free, even for injected results.
+        known_costs = all(c.estimated_cost is not None for c in candidates)
+        budget_fit = 1.0
+        if not known_costs:
+            budget_fit = 0.0
+        elif request.daily_budget is not None and plan.total_cost is not None:
+            budget_fit = min(1.0, request.daily_budget / max(plan.total_cost, 0.01))
+        components = {
+            "calories": sum(self._fit(c.calories, targets.per_meal_calories) for c in candidates) / count,
+            "macros": sum(sum(self._fit(getattr(c, field), target) for field, target in macros.items())
+                          / len(macros) for c in candidates) / count,
+            "budget": budget_fit,
+            "preference": sum(preference.matches(c, request.meal_preference) for c in candidates) / count,
+            "source": sum(request.meal_source == "both" or c.source_type == request.meal_source
+                          for c in candidates) / count,
+            "pantry": sum(pantry_fit) / len(pantry_fit) if home and pantry else 1.0,
+            "variety": len({self._dish_key(c) for c in candidates}) / count,
+            "practicality": sum(c.source_type == "eat_out" or bool(c.recipe_steps) for c in candidates) / count,
+        }
+        weights = config.RESPONSE_SCORE_WEIGHTS
+        score = 100 * sum(weights[key] * value for key, value in components.items()) / sum(weights.values())
+        return ResponseSelection(response, plan, score, components)
+
+    def select_response_sets(self, responses: Sequence[AIResponseSet], request: MealPlanRequest) -> ResponseSelection:
+        """Choose by score, then daily cost, then response content, then provider label.
+
+        Completion order and latency never affect suitability. Provider name is
+        consulted only when scores, cost and recommendation content are identical.
+        """
+        started = time.perf_counter()
+        evaluated = []
+        for response in responses:
+            result = self.score_response(response, request)
+            if result is None:
+                logger.info("[LogicManager] %s rejected by hard constraints/completeness", response.provider)
+            else:
+                evaluated.append(result)
+                logger.info("[LogicManager] %s score: %.4f components=%s",
+                            response.provider, result.score, result.components)
+        if not evaluated:
+            raise NoSuitableMealsError("No complete AI response meets your dietary, meal-source and strict-budget requirements.")
+
+        def order(result: ResponseSelection):
+            content = tuple(sorted((self._dish_key(c), c.slot, c.source_type, c.calories,
+                                    c.protein_g, c.carbs_g, c.fat_g, c.estimated_cost or 0,
+                                    tuple(sorted(c.ingredient_names))) for c in result.response.candidates))
+            cost = result.plan.total_cost
+            return (-result.score, cost if cost is not None else float("inf"), content, result.response.provider)
+
+        selected = min(evaluated, key=order)
+        logger.info("[LogicManager] Selected provider: %s; score %.4f; comparison %.6f seconds",
+                    selected.response.provider, selected.score, time.perf_counter() - started)
+        return selected
