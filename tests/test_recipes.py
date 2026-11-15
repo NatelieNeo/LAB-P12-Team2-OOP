@@ -204,14 +204,14 @@ def test_io_formats_recipes_and_prints_nothing_when_there_are_none():
 
 def test_cli_shows_recipes_after_a_home_cooked_plan(controller_factory, response_text):
     controller, _ = controller_factory(response_text)
-    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "in", "eggs, rice", "0", "", "5"])
+    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "in", "eggs, rice", "0", "", "7"])
     assert "=== Step-by-step recipes ===" in out
     assert "1. " in out and "Steps:" in out
 
 
 def test_cli_shows_no_recipes_when_eating_out(controller_factory, response_text):
     controller, _ = controller_factory(response_text)
-    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "out", "0", "", "5"])
+    out = run_cli(controller, NEW_USER + ["1", "rice dishes", "out", "0", "", "7"])
     assert "=== Your Meal Plan ===" in out
     assert "Step-by-step recipes" not in out
 
