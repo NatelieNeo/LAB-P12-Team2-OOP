@@ -23,35 +23,39 @@ class CliApp:
 
     def run(self) -> None:
         io = self._io
-        io.welcome()
-        username = io.prompt_username()
-        profile = self._controller.get_profile(username)
-        if profile is not None:
-            io.show_message(f"\nWelcome back, {profile.name}! Let's continue with your meal plan.")
-        else:
-            io.show_message(f"\nNo existing profile found for username: {username}. "
-                            "Lets create a new profile for you.")
-            profile = io.prompt_profile(username)
-            self._controller.register_profile(profile)
-            io.show_message("Profile setup complete!")
+        try:
+            io.welcome()
+            username = io.prompt_username()
+            profile = self._controller.get_profile(username)
+            if profile is not None:
+                io.show_message(f"\nWelcome back, {profile.name}! Let's continue with your meal plan.")
+            else:
+                io.show_message(f"\nNo existing profile found for username: {username}. "
+                                "Lets create a new profile for you.")
+                profile = io.prompt_profile(username)
+                self._controller.register_profile(profile)
+                io.show_message("Profile setup complete!")
 
-        handlers = {"1": self._create_plan, "2": self._view_history,
-                    "3": self._view_profile, "4": self._update_profile,
-                    "5": self._view_recipes}
-        while True:
-            choice = io.prompt_menu_choice()
-            if choice == "6":
-                io.show_message("Exiting the program. Goodbye!")
-                return
-            handler = handlers.get(choice)
-            if handler is None:
-                io.show_message("Please choose a number from 1 to 6.")
-                continue
-            try:
-                profile = handler(profile)
-            except CaloraError as error:
-                io.show_message(f"Unable to complete request: {error}")
-                io.pause()
+            handlers = {"1": self._create_plan, "2": self._view_history,
+                        "3": self._view_profile, "4": self._update_profile,
+                        "5": self._view_recipes}
+            while True:
+                choice = io.prompt_menu_choice()
+                if choice == "6":
+                    io.show_message("Exiting the program. Goodbye!")
+                    return
+                handler = handlers.get(choice)
+                if handler is None:
+                    io.show_message("Please choose a number from 1 to 6.")
+                    continue
+                try:
+                    profile = handler(profile)
+                except CaloraError as error:
+                    io.show_message(f"Unable to complete request: {error}")
+                    io.pause()
+        except KeyboardInterrupt:
+            io.show_message("\nExiting the program. Goodbye!")
+            return
 
     def _create_plan(self, profile: UserProfile) -> UserProfile:
         request = self._io.prompt_request(profile)
@@ -111,6 +115,8 @@ def main(controller: Optional[CaloraController] = None) -> None:
         CliApp(controller or AppFactory.build_controller()).run()
     except CaloraError as error:
         print(str(error))
+    except KeyboardInterrupt:
+        print("\nExiting the program. Goodbye!")
 
 
 if __name__ == "__main__":
