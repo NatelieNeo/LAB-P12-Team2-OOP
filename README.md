@@ -8,6 +8,81 @@ share the same controller and managers.
 
 Repository: https://github.com/NatelieNeo/LAB-P12-Team2-OOP.git
 
+## Part 2 features at a glance
+
+Phase 2 refactors the Phase 1 procedural program into classes, keeps the four
+managers (IO, AI, Logic, Data), and adds one new feature plus advanced features.
+
+| | Feature | Problem it solves | How a user reaches it | Main classes | Tests |
+|---|---|---|---|---|---|
+| **New feature** | Recipes and shopping list | A plan of meal names is not enough to cook from or shop for | Web: expandable recipe inside each home-cooked meal card and a shopping-list card below the plan. Terminal: printed after every plan, and menu option **4. View recipes from saved plans** | `RecipeBuilder`, `ShoppingListBuilder`, `Recipe`, `ShoppingList`, `IngredientParser`, `PlannedMeal` (all in `manager/logic_manager.py` and `manager/models.py`) | `tests/test_recipes.py`, `tests/test_logic_manager.py`, shopping tests in `tests/test_controller.py` and `tests/test_app_workflow.py` |
+| **Advanced feature** | SQLite database with full CRUD | JSON files do not scale to related records (users, plans, meals, recipes) and cannot be queried | Automatic (`CALORA_STORAGE=sqlite`, the default). Create a profile or plan, view history, update a profile, **delete a plan** (terminal option **6**, web history page) | `DataManager` (abstract), `SqliteDataManager`, `JsonDataManager` in `manager/data_manager.py` | `tests/test_data_managers.py`, `tests/test_recipes.py` (in-place upgrade) |
+| **Advanced feature** | Threading | Two AI calls in sequence are slow, and a long call must not freeze the interface | `AI_MODE=multi` runs Gemini and Claude on two threads. Plan jobs run in a thread pool for the web interface; the terminal shows a spinner thread | `MultiAIRecommendationManager`, `ParallelAIProvider`, `PlanJobManager`, `PlanJob`, `ProgressSpinner` | `tests/test_multi_ai.py`, `tests/test_parallel_ai.py`, `tests/test_app_workflow.py` |
+| Interface | Web GUI (Flask) and terminal menu | Two front ends over one controller | `python app.py` (web) or `python main.py` (terminal) | `WebApp`, `CliApp`, `IOManager` | `tests/test_app_workflow.py` |
+
+### New feature: recipes and shopping list
+
+The AI returns, for every home-cooked recommendation, its ingredients (with
+quantities), a portion size and ordered recipe steps. `AIHandlerManager` validates
+them, `LogicManager` ranks the dishes and builds the plan, and two small classes
+turn the chosen plan into something a user can act on:
+
+- `RecipeBuilder.build(plan)` returns `Recipe` objects for the home-cooked meals in
+  breakfast, lunch, dinner order. Eat-out meals have no recipe.
+- `ShoppingListBuilder.build(plan, pantry)` splits the plan's ingredients into
+  **to buy** and **already in your pantry**. It matches whole ingredient names, so
+  "rice" in the pantry covers "rice" but not "rice flour", and it understands simple
+  plurals, serving quantities and preparation words.
+
+Recipes and ingredient measurements are saved with the plan, so they are still
+there in the history view and in later runs. The shopping list is built when a plan is
+shown, from that plan and the pantry entered for it. It checks availability only; it does not know
+whether the pantry holds enough for every serving.
+
+### Advanced feature: SQLite database (CRUD)
+
+`DataManager` is an abstract interface. `SqliteDataManager` (default) and
+`JsonDataManager` both implement it, so the controller never knows which one it has.
+
+| Operation | Method |
+|---|---|
+| Create | `save_profile`, `save_plan` |
+| Read / query | `find_profiles`, `get_profile`, `profile_exists`, `plans_for_user` |
+| Update | `update_profile` |
+| Delete | `delete_profile`, `delete_plan` (removes the plan's meals, ingredients and recipe steps too) |
+
+The SQLite database (`data/calora.db`) is normalised into tables for `users`,
+`user_dietary_restrictions`, `user_pantry_ingredients`, `meal_plans`,
+`meal_plan_missing_slots`, `meals`, `meal_ingredients`, `meal_recipes` and
+`meal_recipe_steps`. An older database without the recipe tables is upgraded in
+place without losing profiles or plans. With `CALORA_STORAGE=json`, the same data
+is kept in `data/user_profiles.json` and `data/meal_plans.json`. A corrupt JSON
+file is set aside as `*.corrupt` rather than overwritten, and a missing file is
+treated as empty. A user can only delete their own plans.
+
+### Advanced feature: threading
+
+Three separate uses of threads, each described further below:
+
+1. **Two AI providers at once.** `MultiAIRecommendationManager` submits Gemini and
+   Claude requests to a `ThreadPoolExecutor(max_workers=2)`, then waits for both.
+   The Logic Manager scores the complete responses and picks the best one (see
+   "Gemini + Claude concurrent recommendations").
+2. **Background plan jobs (web).** `PlanJobManager` runs a plan on a worker thread and
+   tracks it as a `PlanJob` with a `JobStatus` (pending, running, done, failed), so
+   the page can poll for the result.
+3. **Terminal spinner.** `ProgressSpinner` is a `threading.Thread` that animates while the
+   AI call blocks, and is stopped when the call returns.
+
+### Terminal menu
+
+```
+1. Create a meal plan          5. Update your profile
+2. View previous meal plans    6. Delete meal plans
+3. View your profile           7. Exit the program
+4. View recipes from saved plans
+```
+
 ## Gemini + Claude concurrent recommendations
 
 `AI_MODE=multi` submits **two requests to real Python threads**: Google Gemini
@@ -39,11 +114,9 @@ flowchart TD
 
 ### Architecture and reuse
 
-The original project already had `AIProvider`, `GeminiProvider`, `PromptBuilder`,
-`AIHandlerManager`, domain models, a controller, input validation, meal rules,
-ranking strategies and normalized SQLite storage. Its entry points still called
-older function-based interfaces, and missing job imports prevented startup.
-Those integration gaps are repaired so the new feature runs through Calora.
+The Phase 1 functions were refactored into classes behind four managers. Each
+manager keeps one responsibility, and collaborators are passed in through
+constructors, so any part can be replaced in tests.
 
 | Component | Responsibility |
 |---|---|
@@ -53,8 +126,10 @@ Those integration gaps are repaired so the new feature runs through Calora.
 | `manager/models.py` | Existing profiles/requests/plans; typed `AIResponseSet` and `ResponseSelection` objects |
 | `manager/controller.py` | Configuration-based construction, orchestration, selection and saving exactly one plan |
 | `manager/io_manager.py` | Shared CLI/web input validation and terminal output |
-| `manager/data_manager.py` | SQLite or JSON profile/plan persistence, including saved recipe steps and ingredient measurements |
-| `app.py`, `main.py` | Existing Flask routes/templates and terminal menu connected to the controller |
+| `manager/data_manager.py` | `DataManager` interface with SQLite and JSON implementations: profile and plan create, read, update and delete, including saved recipe steps and ingredient measurements |
+| `app.py`, `main.py` | `WebApp` (Flask routes and templates) and `CliApp` (terminal menu), both calling the same controller |
+| `manager/job_manager.py` | Background plan jobs and the terminal progress spinner |
+| `manager/exceptions.py` | `CaloraError` and its subclasses for input, AI, storage and no-suitable-meal failures |
 
 The existing response schema is retained: `estimated_nutrition_targets` and
 exactly ten `recommendations`, with meal type/name/source, numeric calories,
@@ -74,7 +149,7 @@ above the meal cards, with a matching shopping-list card below containing only
 ingredients still to buy. Pantry matching normalizes simple plurals, serving
 quantities, common preparation words and a small set of ingredient aliases;
 it checks ingredient availability, not whether the pantry contains enough for
-every serving. The terminal prints recipes after a plan and offers **5. View recipes from
+every serving. The terminal prints recipes after a plan and offers **4. View recipes from
 saved plans**. Pressing Ctrl+C exits the terminal app with a goodbye message
 instead of displaying a traceback. Eat-out meals have no cooking recipe.
 
@@ -363,11 +438,22 @@ Official references: [Google Python SDK](https://googleapis.github.io/python-gen
 
 The automated tests use fake providers, sample AI responses and temporary
 storage; they do not require live AI credentials. The latest local run completed
-with **223 tests passing**. Run the suite from the repository root:
+with **372 tests passing**. Run the suite from the repository root:
 
 ```powershell
 python -m pytest -q
 ```
+
+| Test file | What it covers |
+|---|---|
+| `tests/test_logic_manager.py` | Logic Manager with hard-coded sample AI responses: nutrition targets, dietary and source rules, ranking criteria, tags, shopping list, recipes, strict budget, scoring and choosing a response, malformed AI output |
+| `tests/test_controller.py` | Controller end to end with a stub AI provider: plans, failures, ownership of deletes |
+| `tests/test_data_managers.py` | JSON and SQLite storage: create, update, delete, cascades, corrupt files |
+| `tests/test_recipes.py` | Recipe feature in the models, storage, terminal and web, and SQLite upgrade |
+| `tests/test_multi_ai.py`, `tests/test_parallel_ai.py` | Threading, timeouts, retries, backup provider and response selection |
+| `tests/test_app_workflow.py` | Web and terminal workflows |
+
+To run one file: `python -m pytest tests/test_logic_manager.py -q`.
 
 GitHub Actions runs the tests on pushes and pull requests to `master` and `main`,
 then builds the Docker image and runs the tests inside it. To perform the same
