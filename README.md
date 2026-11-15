@@ -363,7 +363,7 @@ Official references: [Google Python SDK](https://googleapis.github.io/python-gen
 
 The automated tests use fake providers, sample AI responses and temporary
 storage; they do not require live AI credentials. The latest local run completed
-with **220 tests passing**. Run the suite from the repository root:
+with **223 tests passing**. Run the suite from the repository root:
 
 ```powershell
 python -m pytest -q
@@ -382,4 +382,4 @@ docker run --rm --env-file .env -p 127.0.0.1:8080:8080 -v calora-data:/app/data 
 docker run --rm -it --env-file .env -v calora-data:/app/data calora python main.py
 ```
 
-The CLI exits normally with menu option **6**; Ctrl+C also exits cleanly.
+The CLI exits normally with menu option **7**; Ctrl+C also exits cleanly.
