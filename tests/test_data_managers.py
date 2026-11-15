@@ -1,5 +1,6 @@
 """Exercise both storage backends with real temporary files and databases."""
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -58,6 +59,129 @@ def test_history_does_not_leak_between_users(data_manager):
     data_manager.save_plan(plan, first.username)
     assert len(data_manager.plans_for_user(first.username)) == 1
     assert not data_manager.plans_for_user(second.username)
+
+
+def test_delete_plan_removes_only_the_plan_and_reports_missing_records(data_manager):
+    profile = make_profile()
+    data_manager.save_profile(profile)
+    plan = LogicManager().build_meal_plan(
+        [MealCandidate.from_dict(meal())], make_request(profile))
+    data_manager.save_plan(plan, profile.username)
+    plan_id = next(iter(data_manager.plans_for_user(profile.username)))
+
+    assert data_manager.delete_plan(plan_id)
+    assert not data_manager.plans_for_user(profile.username)
+    assert data_manager.get_profile(profile.username) is not None
+    assert not data_manager.delete_plan(plan_id)
+
+
+def test_delete_profile_removes_profile_and_its_plans(data_manager):
+    profile = make_profile()
+    data_manager.save_profile(profile)
+    plan = LogicManager().build_meal_plan(
+        [MealCandidate.from_dict(meal())], make_request(profile))
+    data_manager.save_plan(plan, profile.username)
+
+    assert data_manager.delete_profile(profile.username)
+    assert data_manager.get_profile(profile.username) is None
+    assert not data_manager.plans_for_user(profile.username)
+    assert not data_manager.delete_profile(profile.username)
+
+
+def test_sqlite_plan_delete_cascades_to_meal_details(tmp_path):
+    db_path = tmp_path / "plan-cascade.db"
+    manager = SqliteDataManager(str(db_path))
+    profile = make_profile()
+    manager.save_profile(profile)
+    plan = LogicManager().build_meal_plan(
+        [MealCandidate.from_dict(meal())], make_request(profile))
+    manager.save_plan(plan, profile.username)
+    plan_id = next(iter(manager.plans_for_user(profile.username)))
+
+    queries = {
+        "meal_plans": "SELECT COUNT(*) FROM meal_plans WHERE plan_id = ?",
+        "missing_slots": "SELECT COUNT(*) FROM meal_plan_missing_slots WHERE plan_id = ?",
+        "meals": "SELECT COUNT(*) FROM meals WHERE plan_id = ?",
+        "ingredients": (
+            "SELECT COUNT(*) FROM meal_ingredients "
+            "WHERE meal_id IN (SELECT meal_id FROM meals WHERE plan_id = ?)"),
+        "recipes": (
+            "SELECT COUNT(*) FROM meal_recipes "
+            "WHERE meal_id IN (SELECT meal_id FROM meals WHERE plan_id = ?)"),
+        "recipe_steps": (
+            "SELECT COUNT(*) FROM meal_recipe_steps "
+            "WHERE meal_id IN (SELECT meal_id FROM meals WHERE plan_id = ?)"),
+    }
+
+    def counts():
+        connection = sqlite3.connect(str(db_path))
+        try:
+            return {
+                name: connection.execute(query, (plan_id,)).fetchone()[0]
+                for name, query in queries.items()
+            }
+        finally:
+            connection.close()
+
+    before = counts()
+    assert before["meal_plans"] == 1
+    assert all(before[name] > 0 for name in (
+        "meals", "ingredients", "recipes", "recipe_steps"))
+
+    assert manager.delete_plan(plan_id)
+    assert all(count == 0 for count in counts().values())
+    assert manager.get_profile(profile.username) is not None
+
+
+def test_sqlite_profile_delete_cascades_through_related_records(tmp_path):
+    db_path = tmp_path / "cascade.db"
+    manager = SqliteDataManager(str(db_path))
+    profile = make_profile(dietary_restrictions=["peanut"])
+    manager.save_profile(profile)
+    manager.update_profile(profile.username, {"pantry_ingredients": ["rice"]})
+    plan = LogicManager().build_meal_plan(
+        [MealCandidate.from_dict(meal())], make_request(profile))
+    manager.save_plan(plan, profile.username)
+
+    related_tables = (
+        "user_dietary_restrictions",
+        "user_pantry_ingredients",
+        "meal_plans",
+        "meal_plan_missing_slots",
+        "meals",
+        "meal_ingredients",
+        "meal_recipes",
+        "meal_recipe_steps",
+    )
+    connection = sqlite3.connect(str(db_path))
+    try:
+        before = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in related_tables
+        }
+    finally:
+        connection.close()
+    assert all(before[table] > 0 for table in (
+        "user_dietary_restrictions",
+        "user_pantry_ingredients",
+        "meal_plans",
+        "meals",
+        "meal_ingredients",
+        "meal_recipes",
+        "meal_recipe_steps",
+    ))
+
+    assert manager.delete_profile(profile.username)
+
+    connection = sqlite3.connect(str(db_path))
+    try:
+        after = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in related_tables
+        }
+    finally:
+        connection.close()
+    assert all(count == 0 for count in after.values())
 
 
 @pytest.mark.parametrize("backend,manager_type", [("json", JsonDataManager), ("sqlite", SqliteDataManager)])

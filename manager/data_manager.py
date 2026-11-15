@@ -35,12 +35,20 @@ class DataManager(ABC):
         """Merge `changes` into the named user's record. False if no such user."""
 
     @abstractmethod
+    def delete_profile(self, username: str) -> bool:
+        """Delete a user's profile and associated data. False if no such user."""
+
+    @abstractmethod
     def save_plan(self, plan: MealPlan, user_id: str) -> None:
         """Store a meal plan for a user."""
 
     @abstractmethod
     def plans_for_user(self, user_id: str) -> Dict[str, MealPlan]:
         """Return that user's stored plans, keyed by record id, oldest first."""
+
+    @abstractmethod
+    def delete_plan(self, plan_id: str) -> bool:
+        """Delete a meal plan. False if no such plan."""
 
     def profile_exists(self, username: str) -> bool:
         """Shared behaviour built on the abstract find_profiles()."""
@@ -112,6 +120,27 @@ class JsonDataManager(DataManager):
                     return True
         return False
 
+    def delete_profile(self, username: str) -> bool:
+        with self._lock:
+            users = self._read_json(self._user_file)
+            user_ids = [
+                entry_id for entry_id, data in users.items()
+                if data.get("username") == username
+            ]
+            if not user_ids:
+                return False
+
+            for entry_id in user_ids:
+                del users[entry_id]
+            plans = self._read_json(self._plan_file)
+            plans = {
+                entry_id: data for entry_id, data in plans.items()
+                if data.get("user_id") != username
+            }
+            self._write_json(self._plan_file, plans)
+            self._write_json(self._user_file, users)
+            return True
+
     def save_plan(self, plan: MealPlan, user_id: str) -> None:
         record = plan.to_dict()
         record["user_id"] = user_id
@@ -125,6 +154,15 @@ class JsonDataManager(DataManager):
             plans = self._read_json(self._plan_file)
         return {entry_id: MealPlan.from_dict(data) for entry_id, data in plans.items()
                 if data.get("user_id") == user_id}
+
+    def delete_plan(self, plan_id: str) -> bool:
+        with self._lock:
+            plans = self._read_json(self._plan_file)
+            if plan_id not in plans:
+                return False
+            del plans[plan_id]
+            self._write_json(self._plan_file, plans)
+            return True
 
 
 class SqliteDataManager(DataManager):
@@ -149,7 +187,7 @@ class SqliteDataManager(DataManager):
             os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
             connection = sqlite3.connect(self._db_path, timeout=10)
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute("PRAGMA foreign_keys = ON")
             return connection
         except (sqlite3.Error, OSError) as error:
             raise StorageError(f"Could not open database {self._db_path}: {error}") from error
@@ -388,6 +426,12 @@ class SqliteDataManager(DataManager):
 
         return True
 
+    def delete_profile(self, username: str) -> bool:
+        return self._execute(
+            "DELETE FROM users WHERE username = ?",
+            (username,),
+        ) > 0
+
     def save_plan(self, plan: MealPlan, user_id: str) -> None:
         plan_id = str(uuid.uuid4())
         connection = self._connect()
@@ -516,3 +560,9 @@ class SqliteDataManager(DataManager):
                 )
             plans[plan_id] = plan
         return plans
+
+    def delete_plan(self, plan_id: str) -> bool:
+        return self._execute(
+            "DELETE FROM meal_plans WHERE plan_id = ?",
+            (plan_id,),
+        ) > 0
