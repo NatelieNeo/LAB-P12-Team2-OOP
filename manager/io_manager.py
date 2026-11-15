@@ -122,8 +122,8 @@ class IOManager:
     ALLERGEN_NOTICE = ("Always check food labels and ask the stall about allergens. "
                        "Calora cannot guarantee a meal is allergen-free.")
     MENU = ("1. Create a meal plan", "2. View previous meal plans", "3. View your profile",
-            "4. Update your profile", "5. View recipes from saved plans",
-            "6. Exit the program")
+            "4. View recipes from saved plans", "5. Update your profile",
+            "6. Delete meal plans", "7. Exit the program")
     SLOT_ORDER = MealPlan.SLOTS
 
     def __init__(self, validator: Optional[UserInputValidator] = None,
@@ -213,7 +213,19 @@ class IOManager:
     def prompt_menu_choice(self) -> str:
         for line in self.MENU:
             self._output(line)
-        return self._input("\nPlease select an option from the list below (1-6): ").strip()
+        return self._input("\nPlease select an option from the list below (1-7): ").strip()
+
+    def prompt_plan_id(self) -> str:
+        return self._input("\nEnter the Meal Plan ID to delete: ").strip()
+
+    def confirm_plan_deletion(self) -> bool:
+        while True:
+            answer = self._input("Delete this meal plan? (yes/no): ").strip().lower()
+            if answer in ("yes", "y"):
+                return True
+            if answer in ("no", "n"):
+                return False
+            self._output("Please enter yes or no.")
 
     def pause(self) -> None:
         try:

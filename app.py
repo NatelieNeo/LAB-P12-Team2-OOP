@@ -4,7 +4,7 @@ import threading
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 
 import config
 from manager.controller import AppFactory, CaloraController
@@ -74,6 +74,7 @@ class WebApp:
             ("/profile/edit", "edit_profile", self.edit_profile, ["GET"]),
             ("/profile/update", "update_profile", self.update_profile, ["POST"]),
             ("/plans", "plans", self.plans, ["GET"]),
+            ("/plans/<plan_id>/delete", "delete_plan", self.delete_plan, ["POST"]),
             ("/logout", "logout", self.logout, ["POST"]),
         )
         for path, endpoint, view, methods in rules:
@@ -258,8 +259,22 @@ class WebApp:
         if profile is None:
             session.clear()
             return redirect(url_for("index"))
-        history = [self._plan_view(plan) for plan in self._controller.get_history(profile.username).values()]
+        history = [
+            {"plan_id": plan_id, **self._plan_view(plan)}
+            for plan_id, plan in self._controller.get_history(profile.username).items()
+        ]
         return render_template("history.html", username=profile.username, meal_plans=history)
+
+    def delete_plan(self, plan_id: str):
+        profile = self._current_profile()
+        if profile is None:
+            session.clear()
+            return redirect(url_for("index"))
+        if self._controller.delete_meal_plan(profile.username, plan_id):
+            flash("Meal plan deleted successfully.")
+        else:
+            flash("Meal plan could not be found or you do not have permission to delete it.")
+        return redirect(url_for("plans"))
 
     def logout(self):
         session.clear()

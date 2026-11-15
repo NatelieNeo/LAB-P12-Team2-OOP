@@ -107,6 +107,21 @@ def test_profile_register_find_and_update(controller_factory):
     assert controller.get_profile("nisha").age == 40
 
 
+def test_delete_meal_plan_is_limited_to_its_owner(controller_factory, response_text):
+    controller, _ = controller_factory(response_text)
+    profile = make_profile()
+    controller.register_profile(profile)
+    controller.register_profile(make_profile(username="other-user"))
+    controller.create_meal_plan(make_request(profile))
+    plan_id = next(iter(controller.get_history(profile.username)))
+
+    assert not controller.delete_meal_plan("other-user", plan_id)
+    assert plan_id in controller.get_history(profile.username)
+    assert controller.delete_meal_plan(profile.username, plan_id)
+    assert not controller.get_history(profile.username)
+    assert controller.get_profile(profile.username) is not None
+
+
 def test_background_job_produces_the_same_plan(controller_factory, response_text):
     controller, _ = controller_factory(response_text)
     profile = make_profile()

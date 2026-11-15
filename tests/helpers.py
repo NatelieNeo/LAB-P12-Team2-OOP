@@ -131,7 +131,7 @@ def run_cli(controller, answers):
         except StopIteration:
             if "Press Enter" in prompt:
                 return ""
-            return "6"
+            return "7"
 
     io = IOManager(input_fn=fake_input,
                    output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))

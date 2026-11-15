@@ -14,7 +14,7 @@ from manager.io_manager import IOManager
 from manager.job_manager import PlanJobManager
 from manager.logic_manager import LogicManager
 from manager.models import UserProfile
-from tests.helpers import FakeProvider, response_data, start_plan, wait_for_plan
+from tests.helpers import FakeProvider, make_request, response_data, start_plan, wait_for_plan
 
 
 @pytest.fixture
@@ -68,6 +68,37 @@ def test_web_profile_plan_history_update_logout(browser):
     assert controller.get_profile("web-user").preferences["meal_preference"] == "rice"
     assert client.post("/logout").status_code == 302
     assert client.get("/plans").status_code == 302
+
+
+def test_web_history_delete_removes_only_the_signed_in_users_plan(browser):
+    client, controller, _ = browser
+    register(client)
+    profile = controller.get_profile("web-user")
+    controller.create_meal_plan(make_request(profile))
+    plan_id = next(iter(controller.get_history(profile.username)))
+
+    history = client.get("/plans")
+    html = history.get_data(as_text=True)
+    form_position = html.index(f'action="/plans/{plan_id}/delete"')
+    assert html.index("<details>") < form_position < html.rindex("</details>")
+    deleted = client.post(f"/plans/{plan_id}/delete")
+    assert deleted.status_code == 302 and deleted.headers["Location"].endswith("/plans")
+    assert not controller.get_history(profile.username)
+    assert controller.get_profile(profile.username) is not None
+    assert b"Meal plan deleted successfully." in client.get("/plans").data
+
+    controller.create_meal_plan(make_request(profile))
+    other_plan_id = next(iter(controller.get_history(profile.username)))
+    controller.register_profile(UserProfile("other-user", "Other User", 24, "female", 60, 165,
+                                            "sedentary", "maintain"))
+    other_client = web.app.test_client()
+    with other_client.session_transaction() as session:
+        session["username"] = "other-user"
+
+    denied = other_client.post(f"/plans/{other_plan_id}/delete")
+
+    assert denied.status_code == 302
+    assert other_plan_id in controller.get_history(profile.username)
 
 
 def test_web_validation_returns_controlled_error(browser):
@@ -151,7 +182,7 @@ def test_stale_profile_session_redirects_instead_of_crashing(browser, endpoint, 
 def test_cli_existing_user_can_generate_view_history_and_exit(browser):
     _, controller, providers = browser
     controller.register_profile(UserProfile.from_dict({**form_profile(), "gender": "female"}))
-    answers = iter(["web-user", "1", "rice", "in", "rice", "9", "yes", "", "2", "", "6"])
+    answers = iter(["web-user", "1", "rice", "in", "rice", "9", "yes", "", "2", "", "7"])
     output = []
     io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *args: output.append(" ".join(map(str, args))))
     CliApp(controller, io).run()
@@ -163,13 +194,32 @@ def test_cli_existing_user_can_generate_view_history_and_exit(browser):
 def test_cli_profile_updates_and_saved_recipe_menu_are_available(browser):
     _, controller, providers = browser
     controller.register_profile(UserProfile.from_dict({**form_profile(), "gender": "female"}))
-    answers = iter(["web-user", "4", "Updated CLI Name"] + [""] * 7 + ["", "3", "", "5", "", "6"])
+    answers = iter(["web-user", "5", "Updated CLI Name"] + [""] * 7 + ["", "3", "", "4", "", "7"])
     shown = []
     io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))
     CliApp(controller, io).run()
     assert controller.get_profile("web-user").name == "Updated CLI Name"
     assert any("No recipes found" in line for line in shown)
+    assert io.MENU[2:5] == ("3. View your profile", "4. View recipes from saved plans",
+                            "5. Update your profile")
     assert all(p.calls == 0 for p in providers)
+
+
+def test_cli_deletes_selected_saved_plan(browser):
+    _, controller, _ = browser
+    profile = UserProfile.from_dict({**form_profile(), "gender": "female"})
+    controller.register_profile(profile)
+    controller.create_meal_plan(make_request(profile))
+    plan_id = next(iter(controller.get_history(profile.username)))
+    answers = iter(["web-user", "6", plan_id, "yes", "", "7"])
+    shown = []
+    io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))
+
+    CliApp(controller, io).run()
+
+    assert not controller.get_history(profile.username)
+    assert any("Meal plan deleted successfully." in line for line in shown)
+    assert io.MENU[-2:] == ("6. Delete meal plans", "7. Exit the program")
 
 
 def test_cli_stops_spinner_and_returns_to_menu_on_ai_failure(browser):
@@ -178,7 +228,7 @@ def test_cli_stops_spinner_and_returns_to_menu_on_ai_failure(browser):
     controller.register_profile(UserProfile.from_dict({**form_profile(), "gender": "female"}))
     for provider in providers:
         provider.outcomes = ("invalid JSON",)
-    answers = iter(["web-user", "1", "rice", "in", "rice", "0", "", "6"])
+    answers = iter(["web-user", "1", "rice", "in", "rice", "0", "", "7"])
     shown, spinner = [], Mock()
     io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))
     CliApp(controller, io, spinner_factory=lambda: spinner).run()

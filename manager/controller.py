@@ -71,6 +71,12 @@ class CaloraController:
     def get_history(self, username: str) -> Dict[str, MealPlan]:
         return self._data.plans_for_user(username)
 
+    def delete_meal_plan(self, username: str, plan_id: str) -> bool:
+        """Delete a saved plan only when it belongs to the named user."""
+        if plan_id not in self._data.plans_for_user(username):
+            return False
+        return self._data.delete_plan(plan_id)
+
     # ---- background jobs -----------------------------------------------------
     def submit_plan_job(self, request: MealPlanRequest) -> str:
         return self._jobs.submit(lambda: self.create_meal_plan(request), owner=request.profile.username, context=request)

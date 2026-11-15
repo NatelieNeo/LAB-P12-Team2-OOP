@@ -37,16 +37,16 @@ class CliApp:
                 io.show_message("Profile setup complete!")
 
             handlers = {"1": self._create_plan, "2": self._view_history,
-                        "3": self._view_profile, "4": self._update_profile,
-                        "5": self._view_recipes}
+                        "3": self._view_profile, "4": self._view_recipes,
+                        "5": self._update_profile, "6": self._delete_plan}
             while True:
                 choice = io.prompt_menu_choice()
-                if choice == "6":
+                if choice == "7":
                     io.show_message("Exiting the program. Goodbye!")
                     return
                 handler = handlers.get(choice)
                 if handler is None:
-                    io.show_message("Please choose a number from 1 to 6.")
+                    io.show_message("Please choose a number from 1 to 7.")
                     continue
                 try:
                     profile = handler(profile)
@@ -93,6 +93,27 @@ class CliApp:
                 found_recipes = True
         if not found_recipes:
             self._io.show_message("No recipes found in your saved meal plans.")
+        self._io.pause()
+        return profile
+
+    def _delete_plan(self, profile: UserProfile) -> UserProfile:
+        plans = self._controller.get_history(profile.username)
+        if not plans:
+            self._io.show_message("No meal plans found for this user.")
+            self._io.pause()
+            return profile
+
+        self._io.show_history(plans)
+        plan_id = self._io.prompt_plan_id()
+        if plan_id not in plans:
+            self._io.show_message(f"No saved meal plan found with ID: {plan_id}")
+        elif self._io.confirm_plan_deletion():
+            if self._controller.delete_meal_plan(profile.username, plan_id):
+                self._io.show_message("Meal plan deleted successfully.")
+            else:
+                self._io.show_message("That meal plan could not be found. Please refresh your saved plans.")
+        else:
+            self._io.show_message("Meal plan deletion cancelled.")
         self._io.pause()
         return profile
 
