@@ -74,8 +74,9 @@ above the meal cards, with a matching shopping-list card below containing only
 ingredients still to buy. Pantry matching normalizes simple plurals, serving
 quantities, common preparation words and a small set of ingredient aliases;
 it checks ingredient availability, not whether the pantry contains enough for
-every serving. The terminal prints recipes after a plan and offers **R**
-to view recipes from saved plans. Eat-out meals have no cooking recipe.
+every serving. The terminal prints recipes after a plan and offers **5. View recipes from
+saved plans**. Pressing Ctrl+C exits the terminal app with a goodbye message
+instead of displaying a traceback. Eat-out meals have no cooking recipe.
 
 `CALORA_STORAGE=sqlite` is the default; `json` selects the alternative storage
 manager. Unknown backend names raise a controlled input error. Existing SQLite
@@ -358,59 +359,19 @@ Official references: [Google Python SDK](https://googleapis.github.io/python-gen
 [Anthropic Python SDK](https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/python),
 [Claude model IDs](https://platform.claude.com/docs/en/models/overview).
 
-## Implementation inventory and verification
+## Testing, CI and Docker
 
-Modified files:
+The automated tests use fake providers, sample AI responses and temporary
+storage; they do not require live AI credentials. The latest local run completed
+with **220 tests passing**. Run the suite from the repository root:
 
-- `.gitignore`, `Dockerfile`, `README.md`, `requirements.txt`, `config.py`
-- `app.py`, `main.py`
-- `manager/ai_manager.py`, `manager/ai_handler_manager.py`, `manager/controller.py`
-- `manager/logic_manager.py`, `manager/models.py`, `manager/io_manager.py`, `manager/job_manager.py`
-- `templates/form.html`, `templates/_plan_content.html`
-- `docs/README_parallel_ai_section.md`, `docs/exception_matrix_parallel_ai.md`
+```powershell
+python -m pytest -q
+```
 
-New files:
-
-- `.env.example`
-- `benchmark_multi_ai.py`
-- `tests/test_multi_ai.py`
-- `tests/test_app_workflow.py`
-
-Initial multi-AI verification (before the later feature-branch merge):
-
-- 105 tests passed, including all 35 existing tests, using Python 3.15.2.
-- Installed Google Gen AI 3.0.0 and Anthropic 1.17.0 SDKs were exercised with
-  in-memory HTTP transports, without contacting provider servers.
-- The two-second fake-provider benchmark measured 4.003 seconds sequentially
-  and 2.028 seconds concurrently (1.97x); worker intervals overlapped.
-- Python syntax/import checks, Python 3.11 grammar parsing, `git diff --check`
-  and `pip check` passed. Python 3.11 runtime and a Docker image build were not tested.
-- Neither API key was configured in this environment, so no live-provider calls
-  were made. All API behaviour was verified using injected providers/transports.
-
-If pytest's default temporary directory is inaccessible in your local sandbox,
-use a fresh workspace directory, for example
-`python -B -m pytest -q -p no:cacheprovider --basetemp=.test-tmp-local-1`.
-Pytest owns/clears its `--basetemp` directory: always use a dedicated test folder.
-
-## Post-merge audit and cleanup
-
-The merge introduced overlapping entry-point implementations, repeated imports,
-factory definitions, storage constants and an `ai=` keyword, plus missing shared
-test fixtures. The cleanup keeps one OOP implementation of each interface,
-one configuration/factory definition, shared logging setup and shared offline
-test helpers. It retains concurrent AI selection, recipes, shopping lists,
-both storage backends, and optional background jobs. CI now covers `master`
-as well as `main`, so future merge syntax errors fail its checks.
-
-The cleaned project passes 160 offline tests locally (Python 3.15) and in Docker
-(Python 3.11). The actual four-worker Gunicorn server returned HTTP 200 for the
-welcome page, and the terminal entry point created a temporary profile and exited
-through option 5 in an isolated container. No live AI calls were made.
-The suite checks both
-storage backends, recipe persistence, web/CLI flows, background-job ownership,
-provider adapters, hard constraints and actual thread overlap. To run the
-same checks in the Python 3.11 container:
+GitHub Actions runs the tests on pushes and pull requests to `master` and `main`,
+then builds the Docker image and runs the tests inside it. To perform the same
+Docker checks locally:
 
 ```powershell
 docker build -t calora .
@@ -420,3 +381,5 @@ docker run --rm --env-file .env -p 127.0.0.1:8080:8080 -v calora-data:/app/data 
 # Terminal interface instead:
 docker run --rm -it --env-file .env -v calora-data:/app/data calora python main.py
 ```
+
+The CLI exits normally with menu option **6**; Ctrl+C also exits cleanly.
