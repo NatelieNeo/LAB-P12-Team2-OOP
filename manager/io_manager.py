@@ -216,7 +216,10 @@ class IOManager:
         return self._input("\nPlease select an option from the list below (1-6): ").strip()
 
     def pause(self) -> None:
-        self._input("\nPress Enter to return to the main menu...")
+        try:
+            self._input("\nPress Enter to return to the main menu...")
+        except (StopIteration, EOFError):
+            return
 
     # ---- terminal output -----------------------------------------------------
     def show_message(self, message: Any) -> None:

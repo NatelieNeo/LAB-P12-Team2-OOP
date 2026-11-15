@@ -124,7 +124,16 @@ def run_cli(controller, answers):
     from main import CliApp
     from manager.io_manager import IOManager
     remaining, shown = iter(answers), []
-    io = IOManager(input_fn=lambda prompt: next(remaining),
+
+    def fake_input(prompt):
+        try:
+            return next(remaining)
+        except StopIteration:
+            if "Press Enter" in prompt:
+                return ""
+            return "6"
+
+    io = IOManager(input_fn=fake_input,
                    output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))
     CliApp(controller, io, spinner_factory=QuietSpinner).run()
     return "\n".join(shown)
