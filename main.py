@@ -37,15 +37,15 @@ class CliApp:
 
         handlers = {"1": self._create_plan, "2": self._view_history,
                     "3": self._view_profile, "4": self._update_profile,
-                    "R": self._view_recipes}
+                    "5": self._view_recipes}
         while True:
             choice = io.prompt_menu_choice()
-            if choice == "5":
+            if choice == "6":
                 io.show_message("Exiting the program. Goodbye!")
                 return
             handler = handlers.get(choice)
             if handler is None:
-                io.show_message("Please choose a number from 1 to 5. Enter R to view recipes.")
+                io.show_message("Please choose a number from 1 to 6.")
                 continue
             try:
                 profile = handler(profile)

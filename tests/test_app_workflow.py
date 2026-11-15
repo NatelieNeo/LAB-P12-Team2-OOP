@@ -151,7 +151,7 @@ def test_stale_profile_session_redirects_instead_of_crashing(browser, endpoint, 
 def test_cli_existing_user_can_generate_view_history_and_exit(browser):
     _, controller, providers = browser
     controller.register_profile(UserProfile.from_dict({**form_profile(), "gender": "female"}))
-    answers = iter(["web-user", "1", "rice", "in", "rice", "9", "yes", "", "2", "", "5"])
+    answers = iter(["web-user", "1", "rice", "in", "rice", "9", "yes", "", "2", "", "6"])
     output = []
     io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *args: output.append(" ".join(map(str, args))))
     CliApp(controller, io).run()
@@ -163,7 +163,7 @@ def test_cli_existing_user_can_generate_view_history_and_exit(browser):
 def test_cli_profile_updates_and_saved_recipe_menu_are_available(browser):
     _, controller, providers = browser
     controller.register_profile(UserProfile.from_dict({**form_profile(), "gender": "female"}))
-    answers = iter(["web-user", "4", "Updated CLI Name"] + [""] * 7 + ["", "3", "", "r", "", "5"])
+    answers = iter(["web-user", "4", "Updated CLI Name"] + [""] * 7 + ["", "3", "", "5", "", "6"])
     shown = []
     io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))
     CliApp(controller, io).run()
@@ -178,7 +178,7 @@ def test_cli_stops_spinner_and_returns_to_menu_on_ai_failure(browser):
     controller.register_profile(UserProfile.from_dict({**form_profile(), "gender": "female"}))
     for provider in providers:
         provider.outcomes = ("invalid JSON",)
-    answers = iter(["web-user", "1", "rice", "in", "rice", "0", "", "5"])
+    answers = iter(["web-user", "1", "rice", "in", "rice", "0", "", "6"])
     shown, spinner = [], Mock()
     io = IOManager(input_fn=lambda prompt: next(answers), output_fn=lambda *parts: shown.append(" ".join(map(str, parts))))
     CliApp(controller, io, spinner_factory=lambda: spinner).run()
